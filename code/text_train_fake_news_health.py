@@ -32,13 +32,13 @@ from text_train_main import *
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     # Required Paths
-    parser.add_argument('--data_path', type = str, default = '../data',
-                          help='path to dataset folder that contains the folders to gossipcop or politifact folders (raw data)')
-    parser.add_argument('--glove_path', type = str, default = '../data/glove/glove.840B.300d.txt',
+    parser.add_argument('--data_path', type = str, default = './data',
+                          help='path to main dataset folder that contains dataset prcoessed files')
+    parser.add_argument('--glove_path', type = str, default = './data/glove/glove.840B.300d.txt',
                           help='path for Glove embeddings (850B, 300D)')
-    parser.add_argument('--model_checkpoint_path', type = str, default = '../model_checkpoints',
+    parser.add_argument('--model_checkpoint_path', type = str, default = './model_checkpoints',
                           help='Directory for saving trained model checkpoints')
-    parser.add_argument('--vis_path', type = str, default = '../vis_checkpoints',
+    parser.add_argument('--vis_path', type = str, default = './vis_checkpoints',
                           help='Directory for saving tensorboard checkpoints')
     parser.add_argument("--model_save_name", type=str, default= 'best_model.pt',
                        help = 'saved model name')
@@ -47,7 +47,7 @@ if __name__ == '__main__':
     
     # Named params    
     parser.add_argument('--data_name', type = str, default = 'HealthStory',
-                          help='dataset name:  HealthStory / HealthRelease')
+                          help='dataset name:  politifact / HealthRelease / HealthStory / gossipcop')
     parser.add_argument('--model_name', type = str, default = 'cnn',
                           help='model name: bilstm / bilstm_pool / bilstm_reg / han / cnn / \
                               bert-base-cased / bert-large-cased / xlnet-base-cased / xlnet-large-cased / roberta-base / roberta-large')
@@ -216,10 +216,7 @@ if __name__ == '__main__':
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     config['device'] = device    
 
-    if config['data_name'] == 'pheme':
-        config['n_classes'] = 3
-    else:
-        config['n_classes'] = 1            
+    config['n_classes'] = 1            
    
     # Check all provided paths:    
     if config['embed_name'] not in ['bert', 'xlnet', 'roberta']:

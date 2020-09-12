@@ -18,8 +18,6 @@ from sklearn.metrics import f1_score, recall_score, precision_score, accuracy_sc
 
 from torch.utils.tensorboard import SummaryWriter
 
-# from tensorboardX import SummaryWriter
-# from nltk import word_tokenize
 import nltk
 nltk.download('punkt')
 from torch.autograd import Variable
@@ -40,15 +38,16 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 class LR_model(torch.nn.Module):
     def __init__(self, config):
         super(LR_model, self).__init__()
+        self.text_dim = 1024 if config['text_encoder'] == 'roberta' else 384
+        self.graph_dim = config['graph_dim']
+        
         if config['mode'] == 'gnn':
-            self.in_dim = 256 if config['model_name'] != 'gat' else 300
-            self.in_dim = self.in_dim*3 if config['model_name'] == 'gat' else self.in_dim
+            self.in_dim = self.graph_dim*3 if config['model_name'] in ['gat', 'rgat'] else self.graph_dim
         elif config['mode'] == 'text':
-            self.in_dim = 300
+            self.in_dim = self.text_dim
         else:
-            self.in_dim = 256 if config['model_name'] != 'gat' else 300
-            self.in_dim = self.in_dim*3 if config['model_name'] == 'gat' else self.in_dim
-            self.in_dim+=1024
+            self.in_dim = self.graph_dim*3 if config['model_name'] == 'gat' else self.graph_dim
+            self.in_dim+=self.text_dim
         self.classifier = nn.Linear(self.in_dim, config['n_classes'])
             
 
@@ -97,7 +96,7 @@ class LR_Learner():
                 preds = self.model(batch_x)
                 if config['loss_func'] == 'bce':
                     preds = F.sigmoid(preds)
-                labels = batch_y.long() if config['data_name'] == 'pheme' else batch_y.float()
+                labels = batch_y.float()
                 # labels = batch_y.float()
                 preds = torch.where(torch.isnan(preds), torch.zeros_like(preds), preds)
                 loss = self.criterion(preds.to(device), labels.to(device))
@@ -125,22 +124,13 @@ class LR_Learner():
                 print(classification_report(np.array(labels_list), np.array(preds_list)))
             
             if not test:
-                if config['data_name'] != 'pheme':
-                    eval_f1, eval_macro_f1, eval_recall, eval_precision, eval_accuracy = evaluation_measures(config, np.array(preds_list), np.array(labels_list))
-                    return eval_f1, eval_macro_f1, eval_precision, eval_recall, eval_accuracy, eval_loss
-                else:
-                    eval_f1, eval_recall, eval_precision, eval_accuracy = evaluation_measures_pheme(config, np.array(preds_list), np.array(labels_list))
-                    return eval_f1, eval_precision, eval_recall, eval_accuracy, eval_loss  
-                    # eval_f1, eval_f1_neg, eval_macro_f1, eval_recall, eval_precision, eval_accuracy = evaluation_measures_pheme_filtered(config, np.array(preds_list), np.array(labels_list))
-                    # return eval_f1, eval_f1_neg, eval_macro_f1, eval_precision, eval_recall, eval_accuracy, eval_loss
+                eval_f1, eval_macro_f1, eval_recall, eval_precision, eval_accuracy = evaluation_measures(config, np.array(preds_list), np.array(labels_list))
+                return eval_f1, eval_macro_f1, eval_precision, eval_recall, eval_accuracy, eval_loss
             
             else:
-                if config['data_name'] != 'pheme':
-                    eval_f1, eval_macro_f1, eval_recall, eval_precision, eval_accuracy = evaluation_measures(config, np.array(preds_list), np.array(labels_list))
-                    return eval_f1, eval_macro_f1, eval_precision, eval_recall, eval_accuracy, eval_loss
-                else:
-                    eval_f1, eval_recall, eval_precision, eval_accuracy = evaluation_measures_pheme(config, np.array(preds_list), np.array(labels_list))
-                    return preds_list, labels_list, eval_f1, eval_precision, eval_recall, eval_accuracy, eval_loss  
+                eval_f1, eval_macro_f1, eval_recall, eval_precision, eval_accuracy = evaluation_measures(config, np.array(preds_list), np.array(labels_list))
+                return eval_f1, eval_macro_f1, eval_precision, eval_recall, eval_accuracy, eval_loss
+                
             
     
     
@@ -153,11 +143,9 @@ class LR_Learner():
         print(len(correct_pred_docs))
         temp_dict = {'correct_preds' : list(correct_pred_docs)}
         model = 'roberta' if config['mode'] == 'text' else config['model_name']
-        dataname = 'pheme_cv' if config['data_name'] == 'pheme' else config['data_name']
-        if config['data_name'] != 'pheme':
-            correct_doc_file = os.path.join('data', 'complete_data', dataname, 'cached_embeds', 'correct_docs_{}.json'.format(model))
-        else:
-            correct_doc_file = os.path.join('data', 'complete_data', dataname, 'fold_{}'.format(fold), 'correct_docs_{}.json'.format(model))
+        dataname = config['data_name']
+        correct_doc_file = os.path.join('data', 'complete_data', dataname, 'cached_embeds', 'correct_docs_{}.json'.format(model))
+        
         print("Saving the list of correct test preds in : ", correct_doc_file)
         with open(correct_doc_file, 'w+') as j:
             json.dump(temp_dict, j)
@@ -169,40 +157,20 @@ class LR_Learner():
         self.total_iters += self.iters
         self.preds_list = [pred for batch_pred in self.preds_list for pred in batch_pred]
         self.labels_list = [label for batch_labels in self.labels_list for label in batch_labels]
-        
-        if config['data_name'] != 'pheme':
-            self.train_f1, self.train_macro_f1, self.train_recall, self.train_precision, self.train_accuracy = evaluation_measures(config, np.array(self.preds_list), np.array(self.labels_list))
-        else:
-            self.train_f1, self.train_recall, self.train_precision, self.train_accuracy = evaluation_measures_pheme(config, np.array(self.preds_list), np.array(self.labels_list))
-            # self.train_f1, self.train_f1_neg, self.train_macro_f1, self.train_recall, self.train_precision, self.train_accuracy = evaluation_measures_pheme_filtered(config, np.array(self.preds_list), np.array(self.labels_list))
+
+        self.train_f1, self.train_macro_f1, self.train_recall, self.train_precision, self.train_accuracy = evaluation_measures(config, np.array(self.preds_list), np.array(self.labels_list))
             
         # Evaluate on dev set
-        if config['data_name'] != 'pheme':
-            self.eval_f1, self.eval_macro_f1, self.eval_precision, self.eval_recall, self.eval_accuracy, self.eval_loss = self.eval_lr()
-        else:
-            self.eval_f1, self.eval_precision, self.eval_recall, self.eval_accuracy, self.eval_loss = self.eval_lr()
-            # self.eval_f1, self.eval_f1_neg, self.eval_macro_f1, self.eval_precision, self.eval_recall, self.eval_accuracy, self.eval_loss = self.eval_lr()
+        self.eval_f1, self.eval_macro_f1, self.eval_precision, self.eval_recall, self.eval_accuracy, self.eval_loss = self.eval_lr()
                
-        # # print stats
-        # if config['data_name'] != 'pheme':
-        #     print_stats(config, self.epoch, self.train_loss, self.train_accuracy, self.train_f1, self.train_precision, self.train_recall,
-        #                 self.eval_loss, self.eval_accuracy, self.eval_f1, self.eval_precision, self.eval_recall, self.start, lr)
-        # else:
-        #     print_stats_pheme(config, self.epoch, self.train_loss, self.train_accuracy, self.train_f1, self.train_precision, self.train_recall,
-        #                 self.eval_loss, self.eval_accuracy, self.eval_f1, self.eval_precision, self.eval_recall, self.start, lr)
+        # print stats
+        print_stats(config, self.epoch, self.train_loss, self.train_accuracy, self.train_f1, self.train_precision, self.train_recall,
+                    self.eval_loss, self.eval_accuracy, self.eval_f1, self.eval_precision, self.eval_recall, self.start, lr)
         
-        
-        
-        # this_f1 = self.eval_f1[1] if config['data_name']=='pheme' else self.eval_macro_f1
-        this_f1 =  self.eval_f1
-        current_best = self.best_val_f1 
-        # this_f1 =  self.eval_macro_f1
-        # current_best = self.best_val_f1[1] if (not isinstance(self.best_val_f1, int) and config['data_name']=='pheme') else self.best_val_f1
-        if this_f1 > current_best:
+
+        if self.eval_f1 > self.best_val_f1:
             print("New High Score! Saving model...")
             self.best_val_f1 = self.eval_f1
-            # self.best_val_f1 = self.eval_macro_f1
-            # self.best_val_f1 = this_f1
             self.best_val_acc = self.eval_accuracy
             self.best_val_recall = self.eval_recall
             self.best_val_precision = self.eval_precision
@@ -231,13 +199,9 @@ class LR_Learner():
             
             
         self.scheduler.step()
-            
         
-        # current_best = self.best_val_f1[1] if (not isinstance(self.best_val_f1, int) and config['data_name']=='pheme') else self.best_val_f1
-        this_f1 =  self.eval_f1
-        current_best = self.best_val_f1 
         
-        if this_f1 - current_best!=0 and this_f1 - current_best < 1e-3:
+        if self.eval_f1 - self.best_val_f1!=0 and self.eval_f1 - self.best_val_f1 < 1e-3:
             self.not_improved+=1
             print(self.not_improved)
             if self.not_improved >= config['patience']:
@@ -245,7 +209,7 @@ class LR_Learner():
         else:
             self.not_improved = 0
         
-        if this_f1 > current_best and this_f1 - current_best > 1e-3:
+        if self.eval_f1 > self.best_val_f1 and self.eval_f1 - self.best_val_f1 > 1e-3:
             self.best_val_f1 = self.eval_f1
             self.not_improved=0        
         
@@ -272,7 +236,7 @@ class LR_Learner():
         if config['loss_func'] == 'bce':
             self.preds = F.sigmoid(self.preds)
         
-        self.batch_labels = self.batch_y.long() if config['data_name']=='pheme' else self.batch_y.float()
+        self.batch_labels = self.batch_y.float()
         # self.batch_labels = self.batch_y.float()
         # self.preds = torch.where(torch.isnan(self.preds), torch.zeros_like(self.preds), self.preds)
         self.loss = self.criterion(self.preds.to(device),  self.batch_labels.to(device))
@@ -339,20 +303,10 @@ class LR_Learner():
             
         
         # Evaluate on dev set
-        if config['data_name'] != 'pheme':
-            test_f1, test_macro_f1, test_precision, test_recall, test_accuracy, test_loss = self.eval_lr(test=True)
-        else:
-            fold_preds, fold_labels, test_f1, test_precision, test_recall, test_accuracy, test_loss = self.eval_lr(test=True)
-            # test_f1, test_f1_neg, test_macro_f1, test_precision, test_recall, test_accuracy, test_loss = self.eval_lr(test=True)
-            
-        if config['data_name'] != 'pheme':
-            print_test_stats(test_accuracy, test_precision, test_recall, test_f1, test_macro_f1, self.best_val_acc, self.best_val_precision, self.best_val_recall, self.best_val_f1)
-            return test_f1, test_macro_f1, test_accuracy
-        else:
-            # print_test_stats_pheme(test_accuracy, test_precision, test_recall, test_f1, self.best_val_acc, self.best_val_precision, self.best_val_recall, self.best_val_f1)
-            # print(self.actual_best_f1)
-            return test_f1, fold_preds, fold_labels
-            # return test_f1, test_macro_f1
+        test_f1, test_macro_f1, test_precision, test_recall, test_accuracy, test_loss = self.eval_lr(test=True)
+        
+        print_test_stats(test_accuracy, test_precision, test_recall, test_f1, test_macro_f1, self.best_val_acc, self.best_val_precision, self.best_val_recall, self.best_val_f1)
+        return test_f1, test_macro_f1, test_accuracy
                 
         
 
@@ -374,6 +328,8 @@ if __name__ == '__main__':
                           help='dataset name: politifact / gossipcop / pheme / HealthRelease / HealthStory')
     parser.add_argument('--model_name', type = str, default = 'HGCN',
                           help='model name: gcn / graph_sage / graph_conv / gat / rgcn / HGCN')
+    parser.add_argument('--text_encoder', type = str, default = 'roberta',
+                          help='text encoder: cnn / roberta')
     parser.add_argument('--mode', type=str, default='gnn+text',
                         help='what features to use for classification: gnn / text / gnn+text')
     parser.add_argument('--loss_func', type = str, default = 'bce',
@@ -385,6 +341,8 @@ if __name__ == '__main__':
     
     # Dimensions/sizes params   
     parser.add_argument('--batch_size', type = int, default = 16,
+                          help='batch size for training"')
+    parser.add_argument('--graph_dim', type = int, default = 512,
                           help='batch size for training"')
         
     # Numerical params
@@ -418,10 +376,7 @@ if __name__ == '__main__':
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     config['device'] = device   
 
-    if config['data_name'] == 'pheme':
-        config['n_classes'] = 3
-    else:
-        config['n_classes'] = 1             
+    config['n_classes'] = 1             
    
     # Check all provided paths:    
     model_path = os.path.join(config['model_checkpoint_path'], config['data_name'], config['model_name'])
@@ -447,121 +402,31 @@ if __name__ == '__main__':
     
     # # Prepare dataset and iterators for training
     # train_loader, val_loader, test_loader = prepare_lr_training(config)
+
+    seeds = [3, 21, 42, 84, 168]
+    # seeds = [3]
+    f1_list = []
+    macro_f1_list = []
+    acc_list = []
+    for seed in seeds:
+        config['seed']= 21
+        print("\nseed= ", seed)
+        # Prepare dataset and iterators for training
+        train_loader, val_loader, test_loader = prepare_lr_training(config, seed)
+        lr_model = LR_Learner(config)
+        f1, macro_f1, acc = lr_model.train_main()
+        f1_list.append(f1)
+        macro_f1_list.append(macro_f1)
+        acc_list.append(acc)
+        # sys.exit()
     
-    if config['data_name'] != 'pheme':
-        seeds = [3, 21, 42, 84, 168]
-        # seeds = [3]
-        f1_list = []
-        macro_f1_list = []
-        acc_list = []
-        for seed in seeds:
-            config['seed']= 21
-            print("\nseed= ", seed)
-            # if config['model_name'] == 'graph_sage':
-            #     config['lr'] = 5e-3
-            # Prepare dataset and iterators for training
-            train_loader, val_loader, test_loader = prepare_lr_training(config, seed)
-            lr_model = LR_Learner(config)
-            f1, macro_f1, acc = lr_model.train_main()
-            f1_list.append(f1)
-            macro_f1_list.append(macro_f1)
-            acc_list.append(acc)
-            # sys.exit()
-        
-        print(f1_list)
-        print("\nmean accuracy= ", sum(acc_list)/len(acc_list))
-        print("std accuracy = ", stdev(acc_list))
-        print("\nmean f1= ", sum(f1_list)/len(f1_list))
-        print("std f1= ", stdev(f1_list))
-        print("\nmean macro-f1= ", sum(macro_f1_list)/len(macro_f1_list))
-        print("std macro-f1= ", stdev(macro_f1_list))
-    
-    else:
-        seeds = [3, 21, 42, 84, 168]
-        f1_fold_list = []
-        for fold in [1,3,4,6,8]:
-            f1_list = []
-            f1_true_list, f1_false_list = [], []
-            test_preds, test_labels = [], []
-            f1_unverif_list = []
-            for seed in seeds:
-                config['seed']= 21
-                print("\nseed= ", seed)
-                # if config['model_name'] == 'graph_sage':
-                #     config['lr'] = 5e-3
-                # Prepare dataset and iterators for training
-                train_loader, val_loader, test_loader = prepare_lr_training(config, seed, fold)
-                lr_model = LR_Learner(config)
-                f1, p, l = lr_model.train_main()
-                f1_list.append(f1[1])
-                test_preds.append(p)
-                test_labels.append(l)
-                # f1_true_list.append(f1[0])
-                # f1_false_list.append(f1[2])
-                # f1_unverif_list.append(f1[3])
-                # sys.exit()
-            
-            print("\n FOLD {}:".format(fold))
-            print("macro-F1 = ", f1_list)
-            print("F1 true = ", f1_true_list)
-            print("F1 false = ", f1_false_list)
-            print("\nmean f1= ", sum(f1_list)/len(f1_list))
-            print("std f1= ", stdev(f1_list))
-            # print("\nmean f1 true = ", sum(f1_true_list)/len(f1_true_list))
-            # print("mean f1 false = ", sum(f1_false_list)/len(f1_false_list))
-            # print("mean f1 unverif = ", sum(f1_unverif_list)/len(f1_unverif_list))
-            f1_fold_list.append(sum(f1_list)/len(f1_list))
-            
-            
-        print("\n Average across all folds:")
-        print(f1_fold_list)
-        print("\nmean f1= ", sum(f1_fold_list)/len(f1_fold_list))
-        print("std f1= ", stdev(f1_fold_list))
-        test_preds = [pred for batch_pred in test_preds for pred in batch_pred]
-        test_labels = [pred for batch_pred in test_labels for pred in batch_pred]
-        final_test_f1, final_test_recall, final_test_precision, final_test_accuracy = evaluation_measures_pheme(config, np.array(test_preds), np.array(test_labels))
-        print("\n\nFinal Scores (overall):\n")
-        print("F1 =", final_test_f1)
-        print("Recall = ", final_test_recall)
-        print("precision = ", final_test_precision)
-        print("Accuracy = ", final_test_accuracy)
-        # seeds = [3,21,42,84,168]
-        # # seeds = [21,42]
-        # f1_fold_list = []
-        # macro_f1_fold_list = []
-        # for fold in [1,3,4,6,8]:
-        #     f1_list = []
-        #     macro_f1_list = []
-        #     for seed in seeds:
-        #         config['seed']= 21
-        #         print("\nseed= ", seed)
-        #         # if config['model_name'] == 'graph_sage':
-        #         #     config['lr'] = 5e-3
-        #         # Prepare dataset and iterators for training
-        #         train_loader, val_loader, test_loader = prepare_lr_training(config, seed, fold)
-        #         lr_model = LR_Learner(config)
-        #         f1, macro_f1 = lr_model.train_main()
-        #         # f1_list.append(f1[1])
-        #         f1_list.append(f1)
-        #         macro_f1_list.append(macro_f1)
-            
-        #     print("\n FOLD {}:".format(fold))
-        #     print(f1_list)
-        #     print(macro_f1_list)
-        #     print("\nmean f1= ", sum(f1_list)/len(f1_list))
-        #     print("std f1= ", stdev(f1_list))
-        #     print("mean macro_f1= ", sum(macro_f1_list)/len(macro_f1_list))
-        #     print("std macro_f1= ", stdev(macro_f1_list))
-        #     f1_fold_list.append(sum(f1_list)/len(f1_list))
-        #     macro_f1_fold_list.append(sum(macro_f1_list)/len(macro_f1_list))
-            
-        # print("\n Average across all folds:")
-        # print(f1_fold_list)
-        # print(macro_f1_fold_list)
-        # print("\nmean f1= ", sum(f1_fold_list)/len(f1_fold_list))
-        # print("std f1= ", stdev(f1_fold_list))
-        # print("mean macro_f1= ", sum(macro_f1_fold_list)/len(macro_f1_fold_list))
-        # print("std macro_f1= ", stdev(macro_f1_fold_list))
+    print(f1_list)
+    print("\nmean accuracy= ", sum(acc_list)/len(acc_list))
+    print("std accuracy = ", stdev(acc_list))
+    print("\nmean f1= ", sum(f1_list)/len(f1_list))
+    print("std f1= ", stdev(f1_list))
+    print("\nmean macro-f1= ", sum(macro_f1_list)/len(macro_f1_list))
+    print("std macro-f1= ", stdev(macro_f1_list))
         
         
     

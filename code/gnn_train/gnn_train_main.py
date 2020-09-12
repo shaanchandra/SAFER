@@ -79,13 +79,11 @@ class Graph_Net_Main():
         elif self.config['optimizer'] == 'SGD':
             self.optimizer = torch.optim.SGD(self.model.parameters(), lr = self.config['lr'], momentum = self.config['momentum'], weight_decay = self.config['weight_decay'])
           
-        if self.config['data_name'] != 'pheme':
-            if self.config['loss_func'] == 'bce_logits':
-                self.criterion = nn.BCEWithLogitsLoss(pos_weight= torch.tensor([self.config['pos_wt']]).to(device))
-            else:
-                self.criterion = nn.BCELoss()
+        if self.config['loss_func'] == 'bce_logits':
+            self.criterion = nn.BCEWithLogitsLoss(pos_weight= torch.tensor([self.config['pos_wt']]).to(device))
         else:
-            self.criterion = nn.CrossEntropyLoss()            
+            self.criterion = nn.BCELoss()
+       
         
         if self.config['scheduler'] == 'step':
             self.scheduler = torch.optim.lr_scheduler.StepLR(self.optimizer, step_size=self.config['lr_decay_step'], gamma = self.config['lr_decay_factor'])
@@ -119,13 +117,13 @@ class Graph_Net_Main():
                         preds = F.sigmoid(preds)
                     if test:
                         preds = preds[eval_data.test_mask==1]
-                        labels = eval_data.y[eval_data.test_mask==1].long() if self.config['data_name'] == 'pheme' else eval_data.y[eval_data.test_mask==1].float()
+                        labels = eval_data.y[eval_data.test_mask==1].float()
                     else:
                         if self.config['model_name'] == 'HGCN':
                             preds, _ = self.model.decode(preds, eval_data.edge_index.to(device))
                         
                         preds = preds[eval_data.val_mask==1]
-                        labels = eval_data.y[eval_data.val_mask==1].long() if self.config['data_name'] == 'pheme' else eval_data.y[eval_data.val_mask==1].float()
+                        labels = eval_data.y[eval_data.val_mask==1].float()
                     # labels = data.y * node_drop_mask.squeeze()
                     # labels = labels[data.test_mask==1]
                     loss = self.criterion(preds.squeeze(1).to(device), labels.to(device)) if self.config['loss_func'] == 'bce_logits' else self.criterion(preds.to(device), labels.to(device))
@@ -154,12 +152,12 @@ class Graph_Net_Main():
                     preds = F.sigmoid(preds)
                 if test:
                     preds = preds[self.config['data'].test_mask==1]
-                    labels = self.config['data'].y[self.config['data'].test_mask==1].long() if self.config['data_name'] == 'pheme' else self.config['data'].y[self.config['data'].test_mask==1].float()
+                    labels = self.config['data'].y[self.config['data'].test_mask==1].float()
                 else:
                     if self.config['model_name'] == 'HGCN':
                         preds, _ = self.model.decode(preds, self.config['data'].edge_index.to(device))
                     preds = preds[self.config['data'].val_mask==1]
-                    labels = self.config['data'].y[self.config['data'].val_mask==1].long() if self.config['data_name'] == 'pheme' else self.config['data'].y[self.config['data'].val_mask==1].float()
+                    labels = self.config['data'].y[self.config['data'].val_mask==1].float()
                 # labels = self.data.y * node_drop_mask.squeeze()
                 # labels = labels[self.data.test_mask==1]
                 loss = self.criterion(preds.squeeze(1).to(device), labels.to(device)) if self.config['loss_func'] == 'bce_logits' else self.criterion(preds.to(device), labels.to(device))
@@ -178,12 +176,8 @@ class Graph_Net_Main():
             
             # print(classification_report(np.array(labels_list), np.array(preds_list)))
             
-            if self.config['data_name'] != 'pheme':
-                eval_f1, eval_macro_f1, eval_recall, eval_precision, eval_accuracy = evaluation_measures(self.config, np.array(preds_list), np.array(labels_list))
-            else:
-                eval_macro_f1 = None
-                eval_f1, eval_recall, eval_precision, eval_accuracy = evaluation_measures_pheme(self.config, np.array(preds_list), np.array(labels_list))
-                # eval_f1, eval_f1_neg, eval_macro_f1, eval_recall, eval_precision, eval_accuracy = evaluation_measures_pheme_filtered(self.config, np.array(preds_list), np.array(labels_list))
+            eval_f1, eval_macro_f1, eval_recall, eval_precision, eval_accuracy = evaluation_measures(self.config, np.array(preds_list), np.array(labels_list))
+            
         return eval_f1, eval_macro_f1, eval_precision, eval_recall, eval_accuracy, eval_loss
         
     
@@ -202,11 +196,7 @@ class Graph_Net_Main():
         self.preds_list = [pred for batch_pred in self.preds_list for pred in batch_pred]
         self.labels_list = [label for batch_labels in self.labels_list for label in batch_labels]
         
-        if self.config['data_name'] != 'pheme':
-            self.train_f1, self.train_macro_f1, self.train_recall, self.train_precision, self.train_accuracy = evaluation_measures(self.config, np.array(self.preds_list), np.array(self.labels_list))
-        else:
-            self.train_f1, self.train_recall, self.train_precision, self.train_accuracy = evaluation_measures_pheme(self.config, np.array(self.preds_list), np.array(self.labels_list))
-            # self.train_f1, self.train_f1_neg, self.train_macro_f1, self.train_recall, self.train_precision, self.train_accuracy = evaluation_measures_pheme_filtered(self.config, np.array(self.preds_list), np.array(self.labels_list))
+        self.train_f1, self.train_macro_f1, self.train_recall, self.train_precision, self.train_accuracy = evaluation_measures(self.config, np.array(self.preds_list), np.array(self.labels_list))
             
         # log_tensorboard(self.config, self.config['writer'], self.model, self.epoch, self.iters, self.total_iters, self.train_loss, self.train_f1, self.train_precision, self.train_recall, self.train_accuracy, lr[0], self.threshold, loss_only=False, val=False)
         
@@ -215,15 +205,9 @@ class Graph_Net_Main():
         # self.eval_f1, self.eval_f1_neg, self.eval_macro_f1, self.eval_precision, self.eval_recall, self.eval_accuracy, self.eval_loss = self.eval_gcn()
                
         # print stats
-        if self.config['data_name'] != 'pheme':
-            print_stats(self.config, self.epoch, self.train_loss, self.train_accuracy, self.train_f1, self.train_macro_f1, self.train_precision, self.train_recall,
-                        self.eval_loss, self.eval_accuracy, self.eval_f1, self.eval_macro_f1, self.eval_precision, self.eval_recall, self.start, lr[0])
-        else:
-            print_stats_pheme(self.config, self.epoch, self.train_loss, self.train_accuracy, self.train_f1, self.train_precision, self.train_recall,
-                        self.eval_loss, self.eval_accuracy, self.eval_f1, self.eval_precision, self.eval_recall, self.start, lr[0])
-            # print_stats_pheme_filtered(self.config, self.epoch, self.train_loss, self.train_accuracy, self.train_f1, self.train_macro_f1, self.train_precision, self.train_recall,
-                        #self.eval_loss, self.eval_accuracy, self.eval_f1, self.eval_macro_f1, self.eval_precision, self.eval_recall, self.start, lr[0])
-            # print(self.train_f1_neg, self.eval_f1_neg)
+        print_stats(self.config, self.epoch, self.train_loss, self.train_accuracy, self.train_f1, self.train_macro_f1, self.train_precision, self.train_recall,
+                    self.eval_loss, self.eval_accuracy, self.eval_f1, self.eval_macro_f1, self.eval_precision, self.eval_recall, self.start, lr[0])
+        
         
         # log validation stats in tensorboard
         # log_tensorboard(self.config, self.config['writer'], self.model, self.epoch, self.iters, self.total_iters, self.eval_loss, self.eval_f1, self.eval_precision, self.eval_recall, self.eval_accuracy, lr[0], self.threshold, loss_only = False, val=True)
@@ -245,14 +229,11 @@ class Graph_Net_Main():
         #         'optimizer_state_dict': self.optimizer.state_dict(),
         #     }, os.path.join(self.model_file))
         
-        # this_f1 = self.eval_f1[1] if (not isinstance(self.eval_f1, int) and self.config['data_name']=='pheme') else self.eval_f1
-        # current_best = self.best_val_f1[1] if (not isinstance(self.best_val_f1, int) and self.config['data_name']=='pheme') else self.best_val_f1
-        this_f1 =  self.eval_f1 # self.eval_macro_f1
-        current_best =  self.best_val_f1
-        if this_f1 > current_best:
+
+        if self.eval_f1 > self.best_val_f1:
             print("New High Score! Saving model...")
             self.best_val_f1 = self.eval_f1
-            # self.best_val_f1 = this_f1
+            # self.best_val_f1 = self.eval_f1
             self.best_val_f1_macro = self.eval_macro_f1
             self.best_val_acc = self.eval_accuracy
             self.best_val_recall = self.eval_recall
@@ -283,13 +264,8 @@ class Graph_Net_Main():
     
             
         ### Stopping Criteria based on patience ####
-            
-        # If validation f1 score does not improve, divide the learning rate by 5 and
-        # if learning rate falls below given threshold, then terminate training
-        # current_best = self.best_val_f1[1] if (not isinstance(self.best_val_f1, int) and self.config['data_name']=='pheme') else self.best_val_f1
-        current_best = self.best_val_f1
         
-        if this_f1 - current_best!=0 and this_f1 - current_best < 1e-3:
+        if self.eval_f1 - self.best_val_f1!=0 and self.eval_f1 - self.best_val_f1 < 1e-3:
             self.not_improved+=1
             print(self.not_improved)
             if self.not_improved >= self.config['patience']:
@@ -297,8 +273,8 @@ class Graph_Net_Main():
         else:
             self.not_improved = 0
         
-        if this_f1 > current_best and this_f1 - current_best > 1e-3:
-            self.best_val_f1 = current_best
+        if self.eval_f1 > self.best_val_f1 and self.eval_f1 - self.best_val_f1 > 1e-3:
+            self.best_val_f1 = self.best_val_f1
             self.not_improved=0        
         
         # if self.best_val_loss - self.eval_loss < 1e-3:
@@ -379,7 +355,7 @@ class Graph_Net_Main():
                     self.model.train()
                     if self.config['model_name'] in ['HGCN', 'HNN']:
                         self.data.edge_index = to_dense_adj(self.data.edge_index).squeeze(0)
-                    data_x = self.data.x * self.data.representation_mask.unsqueeze(1) # if self.config['mode'] == 'normal' else self.data.x
+                    data_x = self.data.x * self.data.representation_mask.unsqueeze(1) 
                     
                     if self.config['model_name'] in ['HGCN', 'HNN']:
                         self.preds = self.model.encode(data_x.to(device), self.data.edge_index.to(device))
@@ -400,7 +376,7 @@ class Graph_Net_Main():
                 if self.config['model_name'] in ['HGCN', 'HNN']:
                         self.data.edge_index = to_dense_adj(self.data.edge_index).squeeze(0)
                         
-                data_x = self.data.x * self.data.representation_mask.unsqueeze(1) # if self.config['mode'] == 'normal' else self.data.x
+                data_x = self.data.x * self.data.representation_mask.unsqueeze(1) 
                 if self.config['model_name'] in ['HGCN', 'HNN']:
                     self.preds = self.model.encode(data_x.to(device), self.data.edge_index.to(device))
                 elif self.config['model_name'] in ['rgcn', 'rgat', 'rsage']:

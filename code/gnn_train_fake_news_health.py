@@ -13,13 +13,9 @@ import numpy as np
 
 from torch.utils.tensorboard import SummaryWriter
 
-# from tensorboardX import SummaryWriter
-# from nltk import word_tokenize
 import nltk
 nltk.download('punkt')
 
-# from models.gnn_model import Graph_Net, Relational_GNN
-# from models.transformer_model import *
 from utils.utils import *
 from gnn_train.gnn_train_main import *
 from caching_funcs.cache_gnn import *
@@ -46,9 +42,9 @@ if __name__ == '__main__':
     
     # Named params    
     parser.add_argument('--data_name', type = str, default = 'gossipcop',
-                          help='dataset name: politifact / gossipcop / pheme / rumoreval / HealthStory / HealthRelease')
+                          help='dataset name: politifact / gossipcop / HealthStory / HealthRelease')
     parser.add_argument('--model_name', type = str, default = 'HGCN',
-                          help='model name: gcn / graph_sage / graph_conv / gat / rgcn / rsage / rgat / hgcn / HGCN / HNN')
+                          help='model name: gcn / graph_sage / gat / rgcn  / rgat  / HGCN / HNN')
     parser.add_argument('--saint', type = str, default = 'node',
                           help='which GraphSAINT sampling to use: random_walk / node / edge')
     parser.add_argument('--mode', type = str, default = 'lr',
@@ -63,7 +59,7 @@ if __name__ == '__main__':
     # Dimensions/sizes params   
     parser.add_argument('--batch_size', type = int, default = 16,
                           help='batch size for training"')
-    parser.add_argument('--embed_dim', type = int, default = 16,
+    parser.add_argument('--embed_dim', type = int, default = 128,
                           help='dimension of hidden layers of the graph network')
     parser.add_argument('--fc_dim', type = int, default = 64,
                           help='dimension of hidden layers of the MLP classifier')
@@ -130,12 +126,9 @@ if __name__ == '__main__':
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     config['device'] = device   
 
-    if config['data_name'] == 'pheme':
-        config['n_classes'] = 3
-        config['loss_func'] = 'ce'
-    else:
-        config['n_classes'] = 1
-        config['loss_func'] = 'bce_logits'
+
+    config['n_classes'] = 1
+    config['loss_func'] = 'bce_logits'
     
     args.model = config['model_name']
     args.num_layers = 2

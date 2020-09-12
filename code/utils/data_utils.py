@@ -676,61 +676,7 @@ class LR_Dataset(data.Dataset):
     
     
     
-class LR_Dataset_pheme(data.Dataset):
-    def __init__(self, config, split, seed, fold):
 
-        self.base_dir = os.path.join(os.getcwd(), '..', 'data', 'complete_data', 'pheme_cv')
-        self.node2id_file = os.path.join(self.base_dir, 'fold_{}'.format(fold), 'node2id_lr.json'.format(config['data_name']))
-        self.test2id_file = os.path.join(self.base_dir, 'fold_{}'.format(fold), 'doc2id_encoder.json')
-        self.doc_embeds_file_gnn = os.path.join(self.base_dir,'fold_{}'.format(fold), 'doc_embeds_graph_lr_user_{}_{}_{}.pt'.format(split, seed, config['model_name']))
-        self.doc_embeds_file_text = os.path.join(self.base_dir, 'fold_{}'.format(fold), 'doc_embeds_roberta_gnn_lr_21_{}.pt'.format(split))
-        # self.doc_embeds_file_gnn = os.path.join(self.base_dir, 'doc_embeds_graph_lr_30_noise_{}_{}.pt'.format(split, config['model_name']))
-        # self.doc_embeds_file_text = os.path.join(self.base_dir, 'doc_embeds_roberta_lr_{}.pt'.format(split))
-        self.split_docs_labels_file = os.path.join(self.base_dir, 'fold_{}'.format(fold), 'doc2labels.json')
-        self.split_docs_file = os.path.join(self.base_dir, 'fold_{}'.format(fold), 'doc_splits.json'.format(split))
-        self._split_docs = json.load(open(self.split_docs_file, 'r'))['{}_docs'.format(split)]
-        self.node2id = json.load(open(self.node2id_file, 'r'))
-        self.test2id = json.load(open(self.test2id_file, 'r'))
-        self._doc_embeds_gnn = torch.load(self.doc_embeds_file_gnn)
-        self._doc_embeds_text = torch.load(self.doc_embeds_file_text, map_location=torch.device('cpu'))
-        self.data_size = len(self._split_docs)
-        self.mode = config['mode']
-        self.labels = json.load(open(self.split_docs_labels_file, 'r'))
-      
-        
-
-    def __getitem__(self, idx):        
-        # Taking just 1 document out of all the docs in the split based on the 'idx'
-        if self.mode == 'gnn':
-            doc = self._split_docs[idx]
-            doc_embed = self._doc_embeds_gnn[self.node2id[str(doc)], :]
-            label = self.labels[str(doc)]
-            return doc_embed, label
-        elif self.mode == 'text':
-            try:
-                doc = self._split_docs[idx]
-                doc_embed = self._doc_embeds_text[self.test2id[str(doc)], :]
-                if torch.sum(doc_embed)==0:
-                    print("Sum = 0")
-                label = self.labels[str(doc)]
-            except:
-                return None
-            return doc_embed, label
-        elif self.mode == 'gnn+text':
-            try:
-                doc = self._split_docs[idx]
-                doc_embed_text = self._doc_embeds_text[self.test2id[str(doc)], :]
-                doc_embed_gnn = self._doc_embeds_gnn[self.node2id[str(doc)], :]
-                doc_embed = torch.cat((doc_embed_text.unsqueeze(1), doc_embed_gnn.unsqueeze(1)))
-                label = self.labels[str(doc)]
-            except:
-                return None
-                
-            return doc_embed.squeeze(1), label
-            
-    
-    def __len__(self):
-        return self.data_size
     
 
 

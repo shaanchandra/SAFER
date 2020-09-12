@@ -2,15 +2,12 @@ import argparse, time, datetime, shutil
 import sys, os, glob, json, re
 import warnings
 warnings.filterwarnings("ignore")
-# from torchsummary import summary
 
 import numpy as np
 
 import torch
 from torch.utils.tensorboard import SummaryWriter
 
-# from tensorboardX import SummaryWriter
-# from nltk import word_tokenize
 import nltk
 nltk.download('punkt')
 import torch.nn as nn
@@ -64,14 +61,11 @@ class Doc_Encoder_Main():
             elif self.config['optimizer'] == 'SGD':
                 self.optimizer = torch.optim.SGD(self.model.parameters(), lr = self.config['lr'], momentum = self.config['momentum'], weight_decay = self.config['weight_decay'])
             
-            if self.config['data_name'] != 'pheme':
-                if self.config['loss_func'] == 'bce_logits':
-                    self.criterion = nn.BCEWithLogitsLoss(pos_weight= torch.tensor([self.config['pos_wt']]).to(device))
-                else:
-                    self.criterion = nn.BCELoss()
+            if self.config['loss_func'] == 'bce_logits':
+                self.criterion = nn.BCEWithLogitsLoss(pos_weight= torch.tensor([self.config['pos_wt']]).to(device))
             else:
-                self.criterion = nn.CrossEntropyLoss()
-                
+                self.criterion = nn.BCELoss()
+            
             
             if self.config['scheduler'] == 'step':
                 self.scheduler = torch.optim.lr_scheduler.StepLR(self.optimizer, step_size=self.config['lr_decay_step'], gamma = self.config['lr_decay_factor'])
@@ -191,12 +185,7 @@ class Doc_Encoder_Main():
             preds_list = [pred for batch_pred in preds_list for pred in batch_pred]
             labels_list = [label for batch_labels in labels_list for label in batch_labels]
             
-            
-            if self.config['data_name'] != 'pheme':
-                eval_f1, eval_f1_macro, eval_recall, eval_precision, eval_accuracy = evaluation_measures(self.config, np.array(preds_list), np.array(labels_list))
-            else:
-                eval_f1, eval_recall, eval_precision, eval_accuracy = evaluation_measures_pheme(self.config, np.array(preds_list), np.array(labels_list))
-                eval_f1_macro = None
+            eval_f1, eval_f1_macro, eval_recall, eval_precision, eval_accuracy = evaluation_measures(self.config, np.array(preds_list), np.array(labels_list))
             
             eval_loss = sum(eval_loss)/len(eval_loss)
             # if test:
@@ -231,13 +220,7 @@ class Doc_Encoder_Main():
             labels_list = [label for batch_labels in labels_list for label in batch_labels]
             
             eval_loss = sum(eval_loss)/len(eval_loss)
-            if self.config['data_name'] != 'pheme':
-                eval_f1, eval_macro_f1, eval_recall, eval_precision, eval_accuracy = evaluation_measures(self.config, np.array(preds_list), np.array(labels_list))
-                
-            else:
-                eval_macro_f1 = None
-                eval_f1, eval_recall, eval_precision, eval_accuracy = evaluation_measures_pheme(self.config, np.array(preds_list), np.array(labels_list))
-                # eval_f1, eval_f1_neg, eval_macro_f1, eval_recall, eval_precision, eval_accuracy = evaluation_measures_pheme_filtered(self.config, np.array(preds_list), np.array(labels_list))
+            eval_f1, eval_macro_f1, eval_recall, eval_precision, eval_accuracy = evaluation_measures(self.config, np.array(preds_list), np.array(labels_list))
                 
         return eval_f1, eval_macro_f1, eval_precision, eval_recall, eval_accuracy, eval_loss
             
@@ -262,11 +245,7 @@ class Doc_Encoder_Main():
         self.preds_list = [pred for batch_pred in self.preds_list for pred in batch_pred]
         self.labels_list = [label for batch_labels in self.labels_list for label in batch_labels]
         
-        if self.config['data_name'] != 'pheme':
-            self.train_f1, self.train_f1_macro, self.train_recall, self.train_precision, self.train_accuracy = evaluation_measures(self.config, np.array(self.preds_list), np.array(self.labels_list))
-        else:
-            self.train_f1, self.train_recall, self.train_precision, self.train_accuracy = evaluation_measures_pheme(self.config, np.array(self.preds_list), np.array(self.labels_list))
-            # self.train_f1, f1_neg, self.train_f1_macro, self.train_recall, self.train_precision, self.train_accuracy = evaluation_measures_pheme_filtered(self.config, np.array(self.preds_list), np.array(self.labels_list))
+        self.train_f1, self.train_f1_macro, self.train_recall, self.train_precision, self.train_accuracy = evaluation_measures(self.config, np.array(self.preds_list), np.array(self.labels_list))
             
         log_tensorboard(self.config, self.config['writer'], self.model, self.epoch, self.iters, self.total_iters, self.train_loss, self.train_f1, self.train_precision, self.train_recall, self.train_accuracy, lr[0], self.threshold, loss_only=False, val=False)
         
@@ -279,12 +258,8 @@ class Doc_Encoder_Main():
             self.eval_f1, self.eval_f1_macro, self.eval_precision, self.eval_recall, self.eval_accuracy, self.eval_loss = self.eval_han_elmo()
                
         # print stats
-        if self.config['data_name'] != 'pheme':
-            print_stats(self.config, self.epoch, self.train_loss, self.train_accuracy, self.train_f1, self.train_f1_macro, self.train_precision, self.train_recall,
-                        self.eval_loss, self.eval_accuracy, self.eval_f1, self.eval_f1_macro, self.eval_precision, self.eval_recall, self.start, lr[0])
-        else:
-            print_stats_pheme(self.config, self.epoch, self.train_loss, self.train_accuracy, self.train_f1, self.train_precision, self.train_recall,
-                        self.eval_loss, self.eval_accuracy, self.eval_f1, self.eval_precision, self.eval_recall, self.start, lr[0])
+        print_stats(self.config, self.epoch, self.train_loss, self.train_accuracy, self.train_f1, self.train_f1_macro, self.train_precision, self.train_recall,
+                    self.eval_loss, self.eval_accuracy, self.eval_f1, self.eval_f1_macro, self.eval_precision, self.eval_recall, self.start, lr[0])
         
         # log validation stats in tensorboard
         log_tensorboard(self.config, self.config['writer'], self.model, self.epoch, self.iters, self.total_iters, self.eval_loss, self.eval_f1, self.eval_precision, self.eval_recall, self.eval_accuracy, lr[0], self.threshold, loss_only = False, val=True)
@@ -308,16 +283,13 @@ class Doc_Encoder_Main():
         #     }, os.path.join(self.config['model_checkpoint_path'], self.config['data_name'], self.config['embed_name'], self.config['model_name'], self.config['model_save_name']))
         
         # use macroF1 for dataset with more than 2 classes else use F1 of target class
-        # this_f1 = self.eval_f1[1] if self.config['data_name']=='pheme' else self.eval_f1 
-        # current_best = self.best_val_f1[1] if (not isinstance(self.best_val_f1, int) and self.config['data_name']=='pheme') else self.best_val_f1
+        # self.eval_f1 = self.eval_f1[1] if self.config['data_name']=='pheme' else self.eval_f1 
+        # self.best_val_f1 = self.best_val_f1[1] if (not isinstance(self.best_val_f1, int) and self.config['data_name']=='pheme') else self.best_val_f1
         
-        this_f1 = self.eval_f1 
-        current_best = self.best_val_f1
         
-        if this_f1 > current_best:
+        if self.eval_f1 > self.best_val_f1:
             print("New High Score! Saving model...")
-            # self.best_val_f1 = self.eval_f1
-            self.best_val_f1 = this_f1
+            self.best_val_f1 = self.eval_f1
             self.best_val_acc = self.eval_accuracy
             self.best_val_recall = self.eval_recall
             self.best_val_precision = self.eval_precision
@@ -346,11 +318,8 @@ class Doc_Encoder_Main():
         self.scheduler.step()
             
         ### Stopping Criteria based on patience ###
-        # current_best = self.best_val_f1[1] if (not isinstance(self.best_val_f1, int) and self.config['data_name']=='pheme') else self.best_val_f1
-        this_f1 = self.eval_f1 
-        current_best = self.best_val_f1
         
-        if this_f1 - current_best!=0 and this_f1 - current_best < 1e-3:
+        if self.eval_f1 - self.best_val_f1!=0 and self.eval_f1 - self.best_val_f1 < 1e-3:
             self.not_improved+=1
             print(self.not_improved)
             if self.not_improved >= self.config['patience']:
@@ -358,7 +327,7 @@ class Doc_Encoder_Main():
         else:
             self.not_improved = 0
         
-        if this_f1 - current_best > 1e-3:
+        if self.eval_f1 - self.best_val_f1 > 1e-3:
             self.best_val_f1 = self.eval_f1
             self.not_improved=0        
         
@@ -530,11 +499,7 @@ class Doc_Encoder_Main():
             
         elif self.embed_name in ['bert', 'xlnet', 'roberta']:
             
-            if self.config['data_name'] != 'pheme':
-                num_labels = 2
-            else:
-                num_labels = 3
-                
+            num_labels = 2                
             self.model = TRANSFORMER(self.embed_name, self.model_name, args = self.train_args, num_labels=num_labels, use_cuda = self.config['use_cuda'], classif_type = self.config['classifier'], \
                                      extract_embeddings = self.config['extract_embeddings'], sliding_window = self.config['sliding_window'], hidden_dropout_prob= self.config['hidden_dropout_prob'], attention_probs_dropout_prob= self.config['attention_probs_dropout_prob'])
             
@@ -553,41 +518,9 @@ class Doc_Encoder_Main():
                 val_result, _, _, val_stats, val_embeds, val_labels = self.model.eval_model(self.config['val_df'], test=True)
                 test_result, _, _, test_stats, test_embeds, test_labels = self.model.eval_model(self.config['test_df'], test=True)
                 print_transformer_results(self.config, val_stats, test_stats, val_result, test_result)
-                
-            
-            if cache and self.config['data_name'] == 'pheme':
-                # # Get evaluation results for each set
-                train_result, _, _, train_stats, train_embeds, train_labels = self.model.eval_model(self.config['train_df'], test=True)
-                val_result, _, _, val_stats, val_embeds, val_labels = self.model.eval_model(self.config['val_df'], test=True)
-                test_result, _, _, test_stats, test_embeds, test_labels = self.model.eval_model(self.config['test_df'], test=True)
-                
-                base_dir = os.path.join('data', 'complete_data', 'pheme_cv')
-                
-                doc_embed_file = os.path.join(base_dir, 'fold_{}'.format(self.config['fold']), 'doc_embeds_roberta_lr_filtered_{}_train.pt'.format(self.train_args['manual_seed']))
-                print("\nSaving train docs embeddings in : ", doc_embed_file)
-                print(train_embeds.shape)
-                torch.save(train_embeds, doc_embed_file)
-
-                
-                doc_embed_file = os.path.join(base_dir, 'fold_{}'.format(self.config['fold']), 'doc_embeds_roberta_lr_filtered_{}_test.pt'.format(self.train_args['manual_seed']))
-                print("\nSaving test docs embeddings in : ", doc_embed_file)
-                print(test_embeds.shape)
-                torch.save(test_embeds, doc_embed_file)
-                
-                labels_dict = {}
-                labels_dict['train'] = list(map(int, train_labels.cpu().numpy()))
-                # labels_dict['val'] = list(map(int, val_labels.cpu().numpy()))
-                labels_dict['test'] = list(map(int, test_labels.cpu().numpy()))
-                labels_file = os.path.join(base_dir, 'fold_{}'.format(self.config['fold']), 'roberta_labels_filtered_{}.json'.format(self.train_args['manual_seed']))
-                with open(labels_file, 'w+') as json_file:
-                        json.dump(labels_dict, json_file)
-                
-                # Printing results               
-                print_transformer_results(self.config, val_stats, test_stats, val_result, test_result)
-                Cache_Text_Embeds(self.config, self.model)
                         
                         
-            elif cache and self.config['data_name'] != 'pheme':
+            if cache:
                 # # Get evaluation results for each set
                 train_result, _, _, train_stats, train_embeds, train_labels = self.model.eval_model(self.config['train_df'], test=True)
                 val_result, _, _, val_stats, val_embeds, val_labels = self.model.eval_model(self.config['val_df'], test=True)
@@ -648,10 +581,7 @@ class Doc_Encoder_Main():
                 test_f1, test_f1_macro, test_precision, test_recall, test_accuracy, test_loss = self.eval_elmo(test_data, test_label)
             elif self.model_name == 'han' and self.embed_name == 'elmo':
                 test_f1, test_f1_macro, test_precision, test_recall, test_accuracy, test_loss = self.eval_han_elmo(test= True)
-            if self.config['data_name'] != 'pheme':
-                print_test_stats(test_accuracy, test_precision, test_recall, test_f1, test_f1_macro, self.best_val_acc, self.best_val_precision, self.best_val_recall, self.best_val_f1)
-            else:
-                print_test_stats_pheme(test_accuracy, test_precision, test_recall, test_f1, self.best_val_acc, self.best_val_precision, self.best_val_recall, self.best_val_f1)
+            print_test_stats(test_accuracy, test_precision, test_recall, test_f1, test_f1_macro, self.best_val_acc, self.best_val_precision, self.best_val_recall, self.best_val_f1)
             
             if cache:
                 Cache_Text_Embeds(self.config, self.model)
