@@ -58,7 +58,7 @@ def create_base_directory():
 
 
 
-def prepare_data_corpus(new_dir= os.path.join(os.getcwd(), '..', 'data', 'base_data')):
+def prepare_data_corpus(new_dir= os.path.join('data', 'base_data')):
     """
     This method reads all the individual JSON files of both the datasets and creates separate .tsv files for each.
     The .tsv file contains the fields: ID, article title, article content and the label
@@ -68,7 +68,7 @@ def prepare_data_corpus(new_dir= os.path.join(os.getcwd(), '..', 'data', 'base_d
     for data in dataset:
         c=0
         doc2id = {}
-        final_data_file = os.path.join(os.getcwd(), '..', 'data', data+'.tsv')
+        final_data_file = os.path.join('data', data+'.tsv')
  
         for label in labels:
             print("\n --> Processing :  {} dataset ({} labels)".format(data, label))
@@ -112,7 +112,7 @@ def create_data_splits(max_len=5000):
     datasets = ['gossipcop', 'politifact']
     for dataset in datasets:
         print("\nPreparing {} ...".format(dataset))
-        src_dir = os.path.join(os.getcwd(), '..', 'data', dataset+'.tsv')
+        src_dir = os.path.join('data', dataset+'.tsv')
         x_data, y_data, doc_id = [], [], []
         
         # Reading the dataset into workable lists
@@ -196,7 +196,7 @@ def create_data_splits(max_len=5000):
                 y = y_test
                 id_list = doc_id_test
             
-            write_dir = os.path.join(os.getcwd(), '..', 'data', dataset)
+            write_dir = os.path.join('data', dataset)
             if not os.path.exists(write_dir):
                 os.makedirs(write_dir)
             write_dir = os.path.join(write_dir, split+'.tsv')
@@ -212,7 +212,7 @@ def create_data_splits(max_len=5000):
         temp_dict['test_docs'] = doc_id_test
         temp_dict['train_docs'] = doc_id_train
         temp_dict['val_docs'] = doc_id_val
-        doc_splits_file = os.path.join(os.getcwd(), '..', 'data', dataset, 'doc_splits.json')
+        doc_splits_file = os.path.join('data', dataset, 'doc_splits.json')
         print("Writing doc_splits in : ", doc_splits_file)
         json.dump(temp_dict, open(doc_splits_file, 'w+'))
 
@@ -229,7 +229,7 @@ def get_label_distribution(labels):
 
 def get_data_size():
     
-    src_doc_dir = os.path.join(os.getcwd(), '..', 'data', 'base_data', 'gossipcop')
+    src_doc_dir = os.path.join('data', 'base_data', 'gossipcop')
     count, total, fake, real = 0,0,0,0
     small = []
     lengths = []

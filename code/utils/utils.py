@@ -146,24 +146,24 @@ def prepare_gnn_training(config, fold=None, verbose=True):
         loader=None
     
 
-if verbose:
-    print("\n\n" + "-"*50 + "\nDATA STATISTICS:\n" + "-"*50)
-    if config['model_name'] != 'HGCN':
-        print("Contains isolated nodes = ", isolated_nodes)
-        print("Contains self loops = ", self_loops)
-    print("Vocabulary size = ", vocab_size)
-    print('No. of nodes in graph = ', num_nodes)
-    print('No. of nodes after removing isolated nodes = ', new_num_nodes)
-    print("No. of edges in graph = ", data.num_edges)
-    
-    print("\nNo.of train instances = ", data.train_mask.sum().item())
-    print("No.of val instances = ", data.val_mask.sum().item())
-    print("No.of test instances = ", num_nodes - data.train_mask.sum().item() - data.val_mask.sum().item())
+    if verbose:
+        print("\n\n" + "-"*50 + "\nDATA STATISTICS:\n" + "-"*50)
+        if config['model_name'] != 'HGCN':
+            print("Contains isolated nodes = ", isolated_nodes)
+            print("Contains self loops = ", self_loops)
+        print("Vocabulary size = ", vocab_size)
+        print('No. of nodes in graph = ', num_nodes)
+        print('No. of nodes after removing isolated nodes = ', new_num_nodes)
+        print("No. of edges in graph = ", data.num_edges)
         
-    
-    end = time.time()
-    hours, minutes, seconds = calc_elapsed_time(start, end)
-    print("\n"+ "-"*50 + "\nTook  {:0>2} hours: {:0>2} mins: {:05.2f} secs  to Prepare Data\n".format(hours,minutes,seconds))
+        print("\nNo.of train instances = ", data.train_mask.sum().item())
+        print("No.of val instances = ", data.val_mask.sum().item())
+        print("No.of test instances = ", num_nodes - data.train_mask.sum().item() - data.val_mask.sum().item())
+            
+        
+        end = time.time()
+        hours, minutes, seconds = calc_elapsed_time(start, end)
+        print("\n"+ "-"*50 + "\nTook  {:0>2} hours: {:0>2} mins: {:05.2f} secs  to Prepare Data\n".format(hours,minutes,seconds))
     
     return loader, vocab_size, data
     
@@ -181,11 +181,10 @@ def prepare_transformer_training(config, fold=None, verbose=True):
         print("\n\n==>> Loading Data splits and tokenizing each document....")
         
     start = time.time()
-    
-    if config['data_name'] in ['gossipcop', 'politifact', 'HealthRelease', 'HealthStory']:
-        train_data_dir = os.path.join(config['data_path'], 'train.tsv')
-        val_data_dir = os.path.join(config['data_path'], 'val.tsv')
-        test_data_dir = os.path.join(config['data_path'], 'test.tsv')
+
+    train_data_dir = os.path.join(config['data_path'], 'train.tsv')
+    val_data_dir = os.path.join(config['data_path'], 'val.tsv')
+    test_data_dir = os.path.join(config['data_path'], 'test.tsv')
                 
         
     directories = ['train_data_dir', 'val_data_dir', 'test_data_dir']

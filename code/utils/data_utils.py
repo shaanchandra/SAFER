@@ -183,65 +183,6 @@ class FakeHealth_CNN(FakeHealth):
     
     
     
-#############################################################
-## Rumor-veracity data pre-processing for GLove embeddings ##
-#############################################################
-
-class Rumor(TabularDataset):
-    TEXT = Field(sequential = True, batch_first=True, lower=True, use_vocab=True, tokenize=clean_string, include_lengths=True)
-    LABEL = Field(sequential=False, use_vocab=False, batch_first=True, preprocessing = process_labels)
-    NUM_CLASSES = 3
-
-    @staticmethod
-    def sort_key(ex):
-        return len(ex.text)
-
-    @classmethod
-    def get_dataset_splits(cls, data_dir, fold, **kwargs):
-        if fold==0:
-            train=os.path.join('train_1.tsv'.format(fold))
-            validation=os.path.join('val.tsv')
-            test=os.path.join('val.tsv'.format(fold))
-        else:
-            train=os.path.join('train_{}.tsv'.format(fold))
-            validation=os.path.join('test_{}.tsv'.format(fold))
-            test=os.path.join('test_{}.tsv'.format(fold))
-        
-        return super(FakeNews, cls).splits(
-            data_dir, train=train, validation=validation, test=test,
-            format='tsv', fields=[('text', cls.TEXT), ('label', cls.LABEL)])
-
-    @classmethod
-    def main_handler(cls, config, data_dir, fold, shuffle=True):
-
-        # Getting Data Splits: train, dev, test
-        print("\n\n==>> Loading Data splits and tokenizing each document....")
-        train, val, test = cls.get_dataset_splits(data_dir, fold)
-    
-        # Build Vocabulary and obtain embeddings for each word in Vocabulary
-        print("\n==>> Building Vocabulary and obtaining embeddings....")
-        glove_embeds = torchtext.vocab.Vectors(name= config['glove_path'], max_vectors = int(5e4))
-        cls.TEXT.build_vocab(train, val, test, vectors=glove_embeds)
-
-        # Getting iterators for each set
-        print("\n==>> Preparing Iterators....")
-        train_iter, val_iter, test_iter  = BucketIterator.splits((train, val, test), batch_size=config['batch_size'], repeat=False, shuffle=shuffle,
-                                     sort_within_batch=False, device=device)
-        return cls.TEXT, cls.LABEL, train_iter, val_iter, test_iter, train, val, test
-
-
-class Rumor_HAN(Rumor):
-    NESTING = Field(sequential = True, batch_first=True, lower=True, use_vocab=True, tokenize=clean_string)
-    TEXT = NestedField(NESTING, tokenize=sent_tokenize, include_lengths = True)
-    LABEL = Field(sequential=False, use_vocab=False, batch_first=True, preprocessing=process_labels)
-
-
-class Rumor_CNN(Rumor):
-    TEXT = Field(sequential = True, batch_first=True, lower=True, use_vocab=True, tokenize=clean_string_stop_words_remove, include_lengths=True)
-    LABEL = Field(sequential=False, use_vocab=True, batch_first=True, preprocessing=process_labels)
-
-
-
 
 
 
@@ -551,28 +492,31 @@ def collate_for_lr(batch):
 class LR_Dataset(data.Dataset):
     def __init__(self, config, split, seed):
 
-        self.base_dir = os.path.join(os.getcwd(), '..', 'data', 'complete_data', config['data_name'])
+        self.base_dir = os.path.join('data', 'complete_data', config['data_name'])
         
         if config['data_name'] in ['gossipcop', 'politifact']:
-            self.node2id_file = os.path.join(self.base_dir, 'node2id_lr_30_30.json')
-            self.doc_embeds_file_gnn = os.path.join(self.base_dir, 'cached_embeds', 'doc_embeds_graph_lr_30_30_{}_{}_{}.pt'.format(split, seed, config['model_name']))
-            self.doc_embeds_file_text = os.path.join(self.base_dir, 'cached_embeds', 'doc_embeds_roberta_lr_{}.pt'.format(split))
+            self.node2id_file = os.path.join(self.base_dir, 'node2id_lr_30_30_gossipcop.json')
+            self.doc_embeds_file_gnn = os.path.join(self.base_dir, 'cached_embeds', 'doc_embeds_graph_lr_wt3_30_30_{}_{}_{}.pt'.format(split, seed, config['model_name']))
+            # self.doc_embeds_file_text = os.path.join(self.base_dir, 'cached_embeds', 'doc_embeds_roberta_lr_{}.pt'.format(split))
+            self.doc_embeds_file_text = os.path.join(self.base_dir, 'cached_embeds', 'doc_embeds_cnn_21_{}.pt'.format(split))
             # self.doc_embeds_file_text = os.path.join(self.base_dir, 'cached_embeds', 'doc_embeds_gloveavg_lr_{}.pt'.format(split))
             self.split_docs_file = os.path.join(self.base_dir, 'doc_splits_lr.json')
             self._split_docs = json.load(open(self.split_docs_file, 'r'))['{}_docs'.format(split)]
             
         elif config['data_name'] in ['HealthRelease', 'HealthStory']:
             self.node2id_file = os.path.join(self.base_dir, 'node2id_lr_top10.json')
-            self.doc_embeds_file_gnn = os.path.join(self.base_dir, 'cached_embeds', 'doc_embeds_graph_top10_lr_test_21_hgt.pt')
-            # self.doc_embeds_file_gnn = os.path.join(self.base_dir, 'cached_embeds', 'doc_embeds_graph_top10_lr_{}_{}_{}.pt'.format(split, seed, config['model_name']))
+            # self.doc_embeds_file_gnn = os.path.join(self.base_dir, 'cached_embeds', 'doc_embeds_graph_top10_lr_test_21_hgt.pt')
+            self.doc_embeds_file_gnn = os.path.join(self.base_dir, 'cached_embeds', 'doc_embeds_graph_poinc_wt3_attn_lr_{}_{}_{}.pt'.format(split, seed, config['model_name']))
             # self.doc_embeds_file_text = os.path.join(self.base_dir, 'cached_embeds', 'doc_embeds_roberta_21_{}.pt'.format(split))
-            self.doc_embeds_file_text = os.path.join(self.base_dir, 'cached_embeds', 'doc_embeds_roberta_{}_{}.pt'.format(seed, split))
-            doc2labels_file = os.path.join(os.getcwd(), '..', 'FakeHealth', 'doc2labels_{}.json'.format(config['data_name']))
+            # self.doc_embeds_file_text = os.path.join(self.base_dir, 'cached_embeds', 'doc_embeds_roberta_{}_{}.pt'.format(seed, split))
+            self.doc_embeds_file_text = os.path.join(self.base_dir, 'cached_embeds', 'doc_embeds_cnn_42_{}.pt'.format(split))
+            doc2labels_file = os.path.join('FakeHealth', 'doc2labels_{}.json'.format(config['data_name']))
             doc2labels = json.load(open(doc2labels_file, 'r'))
-            self.split_docs_file = os.path.join(os.getcwd(), '..', 'FakeHealth', 'doc_splits_{}.json'.format(config['data_name']))
+            self.split_docs_file = os.path.join('FakeHealth', 'doc_splits_{}.json'.format(config['data_name']))
             self._split_docs = json.load(open(self.split_docs_file, 'r'))['{}_docs'.format(split)]
             
-        self.test2id_file = os.path.join(self.base_dir, 'doc2id_encoder.json')
+        # self.test2id_file = os.path.join(self.base_dir, 'doc2id_encoder.json')
+        self.test2id_file = os.path.join(self.base_dir, 'doc2id_cnn_encoder.json')
         # self.test2id_file = os.path.join(self.base_dir, 'doc2id_encoder_gloveavg.json')
         self.user_type_file = os.path.join(self.base_dir, 'user_types.json')
         
@@ -595,8 +539,8 @@ class LR_Dataset(data.Dataset):
                 print("\nCreating labels dict of {} docs...".format(split))
                 not_in_either=0
                 for split_doc in self._split_docs:
-                    real_file = os.path.join(os.getcwd(), '..', 'data', 'base_data', config['data_name'], 'real', str(split_doc)+'.json')
-                    fake_file = os.path.join(os.getcwd(), '..', 'data', 'base_data', config['data_name'], 'fake', str(split_doc)+'.json')
+                    real_file = os.path.join('data', 'base_data', config['data_name'], 'real', str(split_doc)+'.json')
+                    fake_file = os.path.join('data', 'base_data', config['data_name'], 'fake', str(split_doc)+'.json')
                     # print(real_file + "\n" + fake_file)
                     if os.path.isfile(fake_file):
                         label = 1

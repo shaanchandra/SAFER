@@ -55,7 +55,7 @@ if __name__ == '__main__':
                           help='type of word embeddings used: glove/ elmo/ bert/ xlnet / roberta"')
     parser.add_argument('--optimizer', type = str, default = 'Adam',
                         help = 'Optimizer to use for training')
-    parser.add_argument('--loss_func', type = str, default = 'bce',
+    parser.add_argument('--loss_func', type = str, default = 'bce_logits',
                         help = 'Loss function to use for optimization: bce / bce_logits / ce')
     parser.add_argument('--scheduler', type = str, default = 'step',
                         help = 'The type of lr scheduler to use anneal learning rate: step/multi_step')
@@ -77,9 +77,9 @@ if __name__ == '__main__':
                           help='dimen of FC layer"')
     
     # Numerical params
-    parser.add_argument('--n_classes', type = int, default = 3,
+    parser.add_argument('--n_classes', type = int, default = 2,
                           help='number of classes"')    
-    parser.add_argument('--pos_wt', type = float, default = 0.3,
+    parser.add_argument('--pos_wt', type = float, default = 3,
                           help='Loss reweighting for the positive class to deal with class imbalance')
     parser.add_argument('--lr', type = float, default = 1e-4,
                           help='Learning rate for training')
@@ -240,8 +240,8 @@ if __name__ == '__main__':
         os.makedirs(config['model_path'])
     else:
         print("\nModel save path checked..")
-    if config['data_name'] not in ['HealthStory', 'HealthRelease']:
-        raise ValueError("[!] ERROR:  data_name is incorrect. This file is for trianin of: HealthStory / HealthRelease  only !")
+    if config['data_name'] not in ['HealthStory', 'HealthRelease', 'gossipcop', 'politifact']:
+        raise ValueError("[!] ERROR:  data_name is incorrect. This file is for trianin of: HealthStory / HealthRelease / gossipcop / politifact  only !")
     else:
         print("\nData name checked...")
     if config['model_name'] not in ['bilstm', 'bilstm_pool', 'bilstm_reg', 'han', 'cnn', 'bert-base-cased' , 'bert-large-cased' , 'xlnet-base-cased' , 'xlnet-large-cased', 'roberta-base', 'roberta-large']:
@@ -310,7 +310,7 @@ if __name__ == '__main__':
     
     try:
         doc_encoder = Doc_Encoder_Main(config, train_args)
-        doc_encoder.train_main()
+        doc_encoder.train_main(cache=False)
     except KeyboardInterrupt:
         print("Keyboard interrupt by user detected...\nClosing the tensorboard writer!")
         config['writer'].close()

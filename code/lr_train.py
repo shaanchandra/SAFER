@@ -9,8 +9,6 @@ import sys, os, glob, json
 
 import warnings
 warnings.filterwarnings("ignore")
-# from torchsummary import summary
-
 import numpy as np
 import pandas as pd
 from sklearn.metrics import classification_report
@@ -119,8 +117,6 @@ class LR_Learner():
             eval_loss = sum(eval_loss)/len(eval_loss)
             
             if test:
-                # target_names = ['False', 'True', 'Unverif']
-                # print(classification_report(np.array(labels_list), np.array(preds_list), target_names=target_names))
                 print(classification_report(np.array(labels_list), np.array(preds_list)))
             
             if not test:
@@ -237,8 +233,6 @@ class LR_Learner():
             self.preds = F.sigmoid(self.preds)
         
         self.batch_labels = self.batch_y.float()
-        # self.batch_labels = self.batch_y.float()
-        # self.preds = torch.where(torch.isnan(self.preds), torch.zeros_like(self.preds), self.preds)
         self.loss = self.criterion(self.preds.to(device),  self.batch_labels.to(device))
 
         self.optimizer.zero_grad()

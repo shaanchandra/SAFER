@@ -38,7 +38,7 @@ def prepare_data_corpus(base_dir = '../FakeHealth'):
         doc2labels_file = os.path.join(base_dir, 'doc2labels_{}.json'.format(dataset))
         doc2labels = json.load(open(doc2labels_file, 'r'))
         src_dir = os.path.join(base_dir, 'content', dataset+"/*.json")
-        final_data_file = os.path.join(os.getcwd(), '..', 'data', dataset+'.tsv')
+        final_data_file = os.path.join('data', dataset+'.tsv')
         all_files = glob.glob(src_dir)
         with open(final_data_file, 'a', encoding = 'utf-8', newline= '') as csv_file:
             csv_writer = csv.writer(csv_file, delimiter='\t')
@@ -64,7 +64,7 @@ def create_data_splits_standard(base_dir = os.path.join('../FakeHealth')):
     datasets = ['HealthRelease', 'HealthStory']
     for dataset in datasets:
         print("\nPreparing {} ...".format(dataset))
-        src_dir = os.path.join(os.getcwd(), '..', 'data', dataset+'.tsv')
+        src_dir = os.path.join('data', dataset+'.tsv')
         x_data, y_data, doc_data = [], [], []
         
         # Reading the dataset into workable lists
@@ -93,7 +93,7 @@ def create_data_splits_standard(base_dir = os.path.join('../FakeHealth')):
         # Creating train-val-test split with same/similar label distribution in each split
         sss = StratifiedShuffleSplit(n_splits=1, test_size=0.20, random_state=21)
         x_rest, x_test, y_rest, y_test = [], [], [], []
-        doc_rest, doc_test = [], []
+        doc_rest, doc_id_test = [], []
         for train_index, test_index in sss.split(x_data, y_data):
             for idx in train_index:
                 x_rest.append(x_data[idx])
@@ -103,21 +103,21 @@ def create_data_splits_standard(base_dir = os.path.join('../FakeHealth')):
             for idx in test_index:
                 x_test.append(x_data[idx])
                 y_test.append(y_data[idx])  
-                doc_test.append(doc_data[idx])
+                doc_id_test.append(doc_data[idx])
         
 
         sss = StratifiedShuffleSplit(n_splits=1, test_size=0.10, random_state=21)
         for fold, (train_index, val_index) in enumerate(sss.split(x_rest, y_rest)):
             x_train, x_val, y_train, y_val = [], [], [], []
-            doc_train, doc_val = [], []
+            doc_id_train, doc_id_val = [], []
             for idx in train_index:
                 x_train.append(x_rest[idx])
                 y_train.append(y_rest[idx])
-                doc_train.append(doc_rest[idx])
+                doc_id_train.append(doc_rest[idx])
             for idx in val_index:
                 x_val.append(x_rest[idx])
                 y_val.append(y_rest[idx])
-                doc_val.append(doc_rest[idx])                  
+                doc_id_val.append(doc_rest[idx])                  
 
 
         fake, real = get_label_distribution(y_train)
@@ -138,14 +138,17 @@ def create_data_splits_standard(base_dir = os.path.join('../FakeHealth')):
             if split == 'train':
                 x = x_train
                 y = y_train
+                id_list = doc_id_train
             elif split == 'val':
                 x = x_val
                 y = y_val
+                id_list = doc_id_val
             else:
                 x = x_test
                 y = y_test
+                id_list = doc_id_test
             
-            write_dir = os.path.join(os.getcwd(), '..', 'data', dataset)
+            write_dir = os.path.join('data', dataset)
             if not os.path.exists(write_dir):
                 os.makedirs(write_dir)
             write_dir = os.path.join(write_dir, split+'.tsv')
@@ -154,13 +157,13 @@ def create_data_splits_standard(base_dir = os.path.join('../FakeHealth')):
                 csv_writer = csv.writer(csv_file, delimiter='\t')
                 # csv_writer.writerow(['text', 'label'])
                 for i in range(len(x)):
-                    csv_writer.writerow([x[i], y[i]])
+                    csv_writer.writerow([x[i], y[i], id_list[i]])
 
         
         temp_dict = {}
-        temp_dict['test_docs'] = doc_test
-        temp_dict['train_docs'] = doc_train
-        temp_dict['val_docs'] = doc_val
+        temp_dict['test_docs'] = doc_id_test
+        temp_dict['train_docs'] = doc_id_train
+        temp_dict['val_docs'] = doc_id_val
         doc_splits_file = os.path.join(base_dir, 'doc_splits_{}.json'.format(dataset))
         print("Writing doc_splits in : ", doc_splits_file)
         json.dump(temp_dict, open(doc_splits_file, 'w+'))
@@ -182,7 +185,7 @@ def create_data_splits_cv(base_dir = './FakeHealth'):
         print("\nPreparing {} ...".format(dataset))
         doc2labels_file = os.path.join(base_dir, 'doc2labels_{}.json'.format(dataset))
         doc2labels = json.load(open(doc2labels_file, 'r'))
-        src_dir = os.path.join(os.getcwd(), '..', 'data', dataset+'.tsv')
+        src_dir = os.path.join('data', dataset+'.tsv')
         x_data, y_data, doc_data = [], [], []
         
         # Reading the dataset into workable lists
@@ -211,7 +214,7 @@ def create_data_splits_cv(base_dir = './FakeHealth'):
         # Creating train-val-test split with same/similar label distribution in each split
         sss = StratifiedShuffleSplit(n_splits=1, test_size=0.20, random_state=21)
         x_rest, x_test, y_rest, y_test = [], [], [], []
-        doc_rest, doc_test = [], []
+        doc_rest, doc_id_test = [], []
         for train_index, test_index in sss.split(x_data, y_data):
             for idx in train_index:
                 x_rest.append(x_data[idx])
@@ -221,21 +224,21 @@ def create_data_splits_cv(base_dir = './FakeHealth'):
             for idx in test_index:
                 x_test.append(x_data[idx])
                 y_test.append(y_data[idx])  
-                doc_test.append(doc_data[idx])
+                doc_id_test.append(doc_data[idx])
         
 
         sss = StratifiedShuffleSplit(n_splits=5, test_size=0.10, random_state=21)
         for fold, (train_index, val_index) in enumerate(sss.split(x_rest, y_rest)):
             x_train, x_val, y_train, y_val = [], [], [], []
-            doc_train, doc_val = [], []
+            doc_id_train, doc_id_val = [], []
             for idx in train_index:
                 x_train.append(x_rest[idx])
                 y_train.append(y_rest[idx])
-                doc_train.append(doc_rest[idx])
+                doc_id_train.append(doc_rest[idx])
             for idx in val_index:
                 x_val.append(x_rest[idx])
                 y_val.append(y_rest[idx])
-                doc_val.append(doc_rest[idx])                  
+                doc_id_val.append(doc_rest[idx])                  
 
 
             fake, real = get_label_distribution(y_train)
@@ -263,7 +266,7 @@ def create_data_splits_cv(base_dir = './FakeHealth'):
                     x = x_test
                     y = y_test
                 
-                write_dir = os.path.join(os.getcwd(), '..', 'data', dataset)
+                write_dir = os.path.join('data', dataset)
                 if not os.path.exists(write_dir):
                     os.makedirs(write_dir)
                 write_dir = os.path.join(write_dir, split+'_{}.tsv'.format(fold+1))
@@ -276,9 +279,9 @@ def create_data_splits_cv(base_dir = './FakeHealth'):
     
             
             temp_dict = {}
-            temp_dict['test_docs'] = doc_test
-            temp_dict['train_docs'] = doc_train
-            temp_dict['val_docs'] = doc_val
+            temp_dict['test_docs'] = doc_id_test
+            temp_dict['train_docs'] = doc_id_train
+            temp_dict['val_docs'] = doc_id_val
             doc_splits_file = os.path.join(base_dir, 'doc_splits_{}_{}.json'.format(fold+1, dataset))
             json.dump(temp_dict, open(doc_splits_file, 'w+'))
 

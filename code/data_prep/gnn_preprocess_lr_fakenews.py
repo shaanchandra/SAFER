@@ -19,7 +19,6 @@ class GCN_PreProcess():
         self.config = config
         self.data_dir = config['data_dir']
         self.comp_dir = os.path.join('..', 'data', 'complete_data')
-        # self.comp_dir = os.path.join('../data', 'complete_data')
         self.datasets = []
         
         if politifact:

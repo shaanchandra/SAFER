@@ -67,7 +67,7 @@ if __name__ == '__main__':
     
     # Numerical params
     parser.add_argument('--num_rels', type = int, default = 3,
-                          help='No. of types of edges present"')
+                          help='No. of types of edges (edge relations) present"')
     parser.add_argument('--clusters', type = int, default = 300,
                           help='No. of clusters of sub-graphs for cluster-GCN"')
     parser.add_argument('--pos_wt', type = float, default = 3,

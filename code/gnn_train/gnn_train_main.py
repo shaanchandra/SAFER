@@ -4,7 +4,6 @@ import argparse, time, datetime, shutil
 import sys, os, glob, json, random
 import warnings
 warnings.filterwarnings("ignore")
-# from torchsummary import summary
 
 import numpy as np
 import pandas as pd
@@ -15,8 +14,7 @@ import sys
 sys.path.append("..")
 from torch.utils.tensorboard import SummaryWriter
 
-# from tensorboardX import SummaryWriter
-# from nltk import word_tokenize
+
 from torch.autograd import Variable
 from torchtext.data import Field, BucketIterator
 from torchtext import datasets
@@ -24,13 +22,10 @@ import torch.nn as nn
 from sklearn.metrics import accuracy_score
 from torch_geometric.utils import to_dense_adj
 
-# from models.gnn_model import Graph_Net, Relational_GNN
-# from transformer_model import *
 from utils.utils import *
 from caching_funcs.cache_gnn import *
 
 from models.base_models import NCModel, LPModel
-# from utils.data_utils import load_data
 from utils.train_utils import get_dir_name, format_metrics
 from optimizers.radam import RiemannianAdam
 
@@ -299,10 +294,6 @@ class Graph_Net_Main():
     def train_iters_step(self):
         if self.config['loss_func'] == 'bce':
             self.preds = F.sigmoid(self.preds)
-        
-        
-        # self.batch_labels = self.data.y * self.node_drop_mask.squeeze()
-        # self.batch_labels = self.batch_labels[self.data.train_mask==1] 
         if self.config['model_name'] in ['HGCN', 'HNN']:
             self.preds, _ = self.model.decode(self.preds, self.data.edge_index.to(device))
         self.preds = self.preds[self.data.train_mask==1]

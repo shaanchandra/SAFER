@@ -69,8 +69,8 @@ class Cache_Text_Embeds():
         with open(doc2id_file, 'w+') as json_file:
             json.dump(doc2id, json_file)      
                 
-        if self.config['embed_name'] == 'glove':
-            self.config['batch_size'] = 256
+        if self.config['embed_name'] in ['glove', 'elmo']:
+            self.config['batch_size'] = 1
             self.config['train_loader'], self.config['dev_loader'], self.config['test_loader'], self.config['TEXT'], self.config['LABEL'], self.config['train_split'], self.config['val_split'], self.config['test_split'] = prepare_glove_training(self.config)
             
             # print("\nPreparing the GLoVE embeddings..")
@@ -96,41 +96,53 @@ class Cache_Text_Embeds():
             print("split_doc_cache shape = ", split_doc_cache.shape)
             not_found=0
             with torch.no_grad():
-                for count, doc in enumerate(split_docs):
-                    real_path = os.path.join('data', 'base_data', self.config['data_name'], 'real', str(doc)+'.json')
-                    fake_path = os.path.join('data', 'base_data', self.config['data_name'], 'fake', str(doc)+'.json')
-                    doc_file = real_path if os.path.isfile(real_path) else fake_path
-                    if os.path.isfile(doc_file):
-                        text_list= []
-                        text = json.load(open(doc_file, 'r') )
-                        text = text['text'].replace('\n', ' ')
-                        text = text.replace('\t', ' ')
-                        
-                        if self.config['embed_name'] == 'roberta':
+                if self.config['embed_name'] == 'roberta':
+                    for count, doc in enumerate(split_docs):
+                        real_path = os.path.join('data', 'base_data', self.config['data_name'], 'real', str(doc)+'.json')
+                        fake_path = os.path.join('data', 'base_data', self.config['data_name'], 'fake', str(doc)+'.json')
+                        doc_file = real_path if os.path.isfile(real_path) else fake_path
+                        if os.path.isfile(doc_file):
+                            text_list= []
+                            text = json.load(open(doc_file, 'r') )
+                            text = text['text'].replace('\n', ' ')
+                            text = text.replace('\t', ' ')
                             text_list.append(str(text))
                             _, _, doc_embed = self.model.predict(text_list)
                             doc_embed = doc_embed[:, 0, :].squeeze(0)
                             split_doc_cache[doc2id[str(doc)], :] = doc_embed
+                        
                         else:
-                            if split == 'train':
-                                loader = self.config['train_loader']
-                            elif split == 'val':
-                                loader = self.config['dev_loader']
-                            else:
-                                loader = self.config['test_loader']
-                            
-                            for batch in loader:
-                                embeds = self.model(batch.text[0].to(device), batch.text[1].to(device), cache=True)
-                                ids = list(batch.id)
-                                # split_doc_cache[doc2id['gossipcop-'+str(batch.id.item())], :] = embeds[:]
-                                for i in range(self.config['batch_size']):
-                                    split_doc_cache[doc2id['gossipcop-'+str(ids[i].item())], :] = embeds[i, :]
-                            
+                            not_found+=1
+                        
                         if count % 500 == 0:
                             print("{} done..".format(count))
+                            
+                else:
+                    if split == 'train':
+                        loader = self.config['train_loader']
+                    elif split == 'val':
+                        loader = self.config['dev_loader']
                     else:
-                        not_found+=1
-                
+                        loader = self.config['test_loader']
+                    
+                    for count, batch in enumerate(loader):
+                        embeds = self.model(batch.text[0].to(device), batch.text[1].to(device), cache=True)
+                        split_doc_cache[doc2id['gossipcop-'+str(batch.id.item())], :] = embeds[:]
+                        # ids = list(batch.id)
+                        # for i in range(len(ids)):
+                        #     split_doc_cache[doc2id['gossipcop-'+str(ids[i].item())], :] = embeds[i, :]
+                        
+                        # row_sum = split_doc_cache.sum(1)
+                        # row_sum = list(row_sum)
+                        # c=0
+                        # for s in row_sum:
+                        #     if s==0:
+                        #         c+=1
+                        # print("Zero entries = ", c)
+                        if count % 500 == 0:
+                            print("{} done..".format(count))
+
+
                 row_sum = split_doc_cache.sum(1)
                 row_sum = list(row_sum)
                 c=0
@@ -170,11 +182,19 @@ class Cache_Text_Embeds():
                 # if str(doc) in test_docs:
                 doc2id[str(doc)] = len(doc2id)
         
-        doc2id_file = os.path.join(self.comp_dir, 'doc2id_encoder.json')
+        name = 'doc2id_encoder.json' if self.config['embed_name'] == 'roberta' else 'doc2id_cnn_encoder.json'
+        doc2id_file = os.path.join(self.comp_dir, name)
         print("doc2id = ", len(doc2id))
         print("Saving in : ", doc2id_file)
         with open(doc2id_file, 'w+') as json_file:
             json.dump(doc2id, json_file)                 
+            
+        if self.config['embed_name'] == 'glove':
+            self.config['batch_size'] = 1
+            self.config['train_loader'], self.config['dev_loader'], self.config['test_loader'], self.config['TEXT'], self.config['LABEL'], self.config['train_split'], self.config['val_split'], self.config['test_split'] = prepare_glove_training(self.config)
+        elif self.config['embed_name'] == 'elmo':
+            self.config['batch_size'] = 1
+            self.config['train_data'], self.config['train_labels'], self.config['val_data'], self.config['val_labels'], self.config['test_data'], self.config['test_labels'] = prepare_elmo_training(self.config, fold=0, verbose=False)                 
             
         
         # iterating over test_docs and saving their representations
@@ -189,27 +209,47 @@ class Cache_Text_Embeds():
             else:
                 split_docs = test_docs
             
-            split_doc_cache = torch.zeros(len(doc2id), 1024).to(device)
+            embed_dim = 1024 if self.config['embed_name'] == 'roberta' else 384
+            split_doc_cache = torch.zeros(len(doc2id), embed_dim).to(device)
             print("split_doc_cache shape = ", split_doc_cache.shape)
             not_found=0
             with torch.no_grad():
-                for count, doc in enumerate(split_docs):
-                    doc_file = os.path.join(self.data_dir, 'content', self.config['data_name'], str(doc)+'.json')
-                    if os.path.isfile(doc_file):
-                        text_list= []
-                        text = json.load(open(doc_file, 'r') )
-                        text = text['text'].replace('\n', ' ')
-                        text = text.replace('\t', ' ')
-                        text_list.append(str(text))
-                        _, _, doc_embed = self.model.predict(text_list)
-                        doc_embed = doc_embed[:, 0, :].squeeze(0)
-                        split_doc_cache[doc2id[str(doc)], :] = doc_embed
-                        
+                if self.config['embed_name'] == 'roberta':
+                    for count, doc in enumerate(split_docs):
+                        doc_file = os.path.join(self.data_dir, 'content', self.config['data_name'], str(doc)+'.json')
+                        if os.path.isfile(doc_file):
+                            text_list= []
+                            text = json.load(open(doc_file, 'r') )
+                            text = text['text'].replace('\n', ' ')
+                            text = text.replace('\t', ' ')
+                            text_list.append(str(text))
+                            _, _, doc_embed = self.model.predict(text_list)
+                            doc_embed = doc_embed[:, 0, :].squeeze(0)
+                            split_doc_cache[doc2id[str(doc)], :] = doc_embed
+                            
+                            
+                            if count % 500 == 0:
+                                print("{} done..".format(count))
+                        else:
+                            not_found+=1
+                
+                else:
+                    if split == 'train':
+                        loader = self.config['train_loader']
+                    elif split == 'val':
+                        loader = self.config['dev_loader']
+                    else:
+                        loader = self.config['test_loader']
+                    
+                    for count, batch in enumerate(loader):
+                        embeds = self.model(batch.text[0].to(device), batch.text[1].to(device), cache=True)
+                        split_doc_cache[doc2id['story_reviews_'+str(batch.id.item())], :] = embeds[:]
+                        # ids = list(batch.id)
+                        # for i in range(len(ids)):
+                        #     split_doc_cache[doc2id['gossipcop-'+str(ids[i].item())], :] = embeds[i, :]
                         
                         if count % 500 == 0:
                             print("{} done..".format(count))
-                    else:
-                        not_found+=1
                 
                 row_sum = split_doc_cache.sum(1)
                 row_sum = list(row_sum)
@@ -220,7 +260,8 @@ class Cache_Text_Embeds():
                 print("Zero entries = ", c)
                 print("count = ", count)
                 print("Not found = ", not_found)
-                doc_embed_file = os.path.join(self.comp_dir, 'cached_embeds', 'doc_embeds_roberta_{}_{}.pt'.format(self.config['seed'], split))
+                name = 'doc_embeds_roberta' if self.config['embed_name'] == 'roberta' else 'doc_embeds_cnn'
+                doc_embed_file = os.path.join(self.comp_dir, 'cached_embeds', '{}_{}_{}.pt'.format(name, self.config['seed'], split))
                 print("\nSaving docs embeddings in : ", doc_embed_file)
                 torch.save(split_doc_cache, doc_embed_file)
                 # loaded_embeds = torch.load(doc_embed_file)
