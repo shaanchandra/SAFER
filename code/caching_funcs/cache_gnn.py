@@ -50,7 +50,6 @@ class Cache_GNN_Embeds():
         
         
         
-
     
     def predict_and_cache_fakehealth(self):
         
@@ -109,13 +108,6 @@ class Cache_GNN_Embeds():
                         if not str(node).startswith('g'):
                             self.user_cache[ids, :] = node_embeds[idx, :]
     
-        row_sum = self.user_cache.sum(1)
-        row_sum = list(row_sum)
-        c=0
-        for s in row_sum:
-            if s==0:
-                c+=1
-        print("Zero entries = ", c)
         
         name = 'user_embeds_graph_lr' if self.config['data_name'] in ['HealthRelease', 'HealthStory'] else 'user_embeds_graph_lr_30_30'
         user_embed_file = os.path.join(self.comp_dir, 'cached_embeds', '{}_{}_{}.pt'.format(name, self.config['seed'], self.config['model_name']))
@@ -159,14 +151,7 @@ class Cache_GNN_Embeds():
                     split_doc_cache[self.node2id[str(doc)], : ] /=  c # normalize the sum by no. of users 
                 if count% 500 == 0:
                     print("{} done...".format(count))
-            
-            row_sum = split_doc_cache.sum(1)
-            row_sum = list(row_sum)
-            c=0
-            for s in row_sum:
-                if s==0:
-                    c+=1
-            print("Zero entries = ", c)
+
             
             name = 'doc_embeds_graph_poinc_wt3_lr' if self.config['data_name'] in ['HealthRelease', 'HealthStory'] else 'doc_embeds_graph_lr_30_30_poinc'
             doc_embed_file = os.path.join(self.comp_dir, 'cached_embeds', '{}_{}_{}_{}.pt'.format(name, split, self.config['seed'], self.config['model_name']))

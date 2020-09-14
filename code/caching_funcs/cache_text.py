@@ -67,10 +67,10 @@ class Cache_Text_Embeds():
                 
                         
     def prepare_doc2id(self):
+        
         # Creating doc2id dictionary
         print("\nCreating doc2id dictionary..")
         self.doc2id = {}
-        
         if self.config['data_name'] in ['gossipcop', 'politifact']:
             splits = ['fake', 'real']
             for split in splits:
@@ -179,14 +179,7 @@ class Cache_Text_Embeds():
             else:
                 self.obtain_cnn_representations()
                     
-
-            row_sum = self.split_doc_cache.sum(1)
-            row_sum = list(row_sum)
-            c=0
-            for s in row_sum:
-                if s==0:
-                    c+=1
-            print("Zero entries = ", c)
+                
             print("count = ", self.count)
             print("Not found = ", self.not_found)
             name = 'doc_embeds_{}'.format(self.config['embed_name'])
