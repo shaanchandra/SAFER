@@ -38,15 +38,15 @@ class GNN_PreProcess():
     
         
     
-    def save_adj_matrix(self, dataset, adj_matrix, edge_type, adj_file, edge_type_file):
+    def save_adj_matrix(self, dataset, adj_matrix, edge_type):
         
-        adj_file = os.path.join(self.comp_dir, dataset, adj_file)
-        print("\nMatrix construction done! Saving in  {}".format(adj_file+'.npz'))
+        adj_file = os.path.join(self.comp_dir, dataset, self.adj_file+'.npz')
+        print("\nMatrix construction done! Saving in  {}".format(adj_file))
         save_npz(adj_file, adj_matrix.tocsr())
         # np.save(filename, adj_matrix)
         
-        edge_type_file = os.path.join(self.comp_dir, dataset, edge_type_file)
-        print("\nedge_type construction done! Saving in  {}".format(edge_type_file+'.npz'))
+        edge_type_file = os.path.join(self.comp_dir, dataset, self.edge_type_file+'.npz')
+        print("\nedge_type construction done! Saving in  {}".format(edge_type_file))
         save_npz(edge_type_file, edge_type.tocsr())
         
         # Creating an edge_list matrix of the adj_matrix as required by some GCN frameworks
@@ -59,7 +59,7 @@ class GNN_PreProcess():
         edge_index = np.vstack((np.array(rows), np.array(cols)))
         print("Edge index shape = ", edge_index.shape)
         
-        edge_matrix_file = os.path.join(self.comp_dir, dataset, adj_file+'_edge.npy')
+        edge_matrix_file = os.path.join(self.comp_dir, dataset, self.adj_file+'_edge.npy')
         print("saving edge_list format in :  ", edge_matrix_file)
         np.save(edge_matrix_file, edge_index, allow_pickle=True)
         
@@ -67,7 +67,7 @@ class GNN_PreProcess():
         edge_index = edge_index.toarray()
         edge_index = edge_index.squeeze(0)
         print("edge_type shape = ", edge_index.shape)
-        edge_matrix_file = os.path.join(self.comp_dir, dataset, edge_type_file+'_edge.npy')
+        edge_matrix_file = os.path.join(self.comp_dir, dataset, self.edge_type_file+'_edge.npy')
         print("saving edge_type edge list format in :  ", edge_matrix_file)
         np.save(edge_matrix_file, edge_index, allow_pickle=True)
         

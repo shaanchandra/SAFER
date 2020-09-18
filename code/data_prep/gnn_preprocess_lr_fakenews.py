@@ -423,11 +423,11 @@ class GNN_PreProcess_news(GNN_PreProcess):
             print("Non-zero entries edge_type = ", edge_type.getnnz())
             # print("Total Non-zero entries = ", len(np.nonzero(adj_matrix)[0]))
             
-            adj_file = 'adj_matrix_lr_train_30_5'
+            self.adj_file = 'adj_matrix_lr_train_30_5'
             # filename = self.data_dir+ '/complete_data' + '/adj_matrix_{}.npy'.format(dataset)
             
-            edge_type_file = 'edge_type_lr_train_30_5'
-            self.save_adj_matrix(self, dataset, adj_file, edge_type_file)
+            self.edge_type_file = 'edge_type_lr_train_30_5'
+            self.save_adj_matrix(self, dataset, adj_matrix, edge_type)
 
         return None
     
