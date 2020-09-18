@@ -49,8 +49,7 @@ class Cache_Text_Embeds():
         self.obtain_doc_representations()
         
 
-
-                
+            
     def predict_and_cache_fakehealth(self):
         print("\n\nCaching FakeHealth dataset : ", self.config['data_name'])
         docs_splits_file = os.path.join(self.data_dir, 'doc_splits_{}.json'.format(self.config['data_name']))
@@ -61,8 +60,6 @@ class Cache_Text_Embeds():
     
         self.prepare_doc2id()
         self.obtain_doc_representations()    
-
-
 
                 
                         
@@ -122,7 +119,6 @@ class Cache_Text_Embeds():
     
     
 
-
     
     def obtain_roberta_representations(self):
         
@@ -153,8 +149,7 @@ class Cache_Text_Embeds():
     
     
     
-    
-    
+  
     
     def obtain_doc_representations(self):
         

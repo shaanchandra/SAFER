@@ -6,20 +6,20 @@ import pandas as pd
 from collections import defaultdict
 from scipy.sparse import csr_matrix, lil_matrix, save_npz, load_npz
 from collections import defaultdict
+from gnn_prep_main import GNN_PreProcess
 
 import nltk
 # nltk.download('punkt')
+from nltk.corpus import stopwords
 sys.path.append("..")
-import torch
 
 
 
-class GCN_PreProcess():
+
+class GNN_PreProcess_news(GNN_PreProcess):
     def __init__(self, config, gossipcop=False, politifact=False):
-        self.config = config
-        self.data_dir = config['data_dir']
-        self.comp_dir = os.path.join('..', 'data', 'complete_data')
-        self.datasets = []
+        super(GNN_PreProcess_news, self).__init__(config)
+
         
         if politifact:
             self.datasets.append('politifact')
@@ -423,48 +423,21 @@ class GCN_PreProcess():
             print("Non-zero entries edge_type = ", edge_type.getnnz())
             # print("Total Non-zero entries = ", len(np.nonzero(adj_matrix)[0]))
             
-            filename = os.path.join(self.comp_dir, dataset, 'adj_matrix_lr_train_30_5.npz')
+            adj_file = 'adj_matrix_lr_train_30_5'
             # filename = self.data_dir+ '/complete_data' + '/adj_matrix_{}.npy'.format(dataset)
-            print("\nMatrix construction done! Saving in  {}".format(filename))
-            save_npz(filename, adj_matrix.tocsr())
-            # np.save(filename, adj_matrix)
             
-            filename = os.path.join(self.comp_dir, dataset, 'edge_type_lr_train_30_5.npz')
-            print("\nedge_type construction done! Saving in  {}".format(filename))
-            save_npz(filename, edge_type.tocsr())
-            
-            # Creating an edge_list matrix of the adj_matrix as required by some GCN frameworks
-            print("\nCreating edge_index format of adj_matrix...")
-            start = time.time()
-            # G = nx.DiGraph(adj_matrix.tocsr())
-            # temp_matrix = adj_matrix.toarray()
-            # rows, cols = np.nonzero(temp_matrix)
-            rows, cols = adj_matrix.nonzero()
-            
-            edge_index = np.vstack((np.array(rows), np.array(cols)))
-            print("Edge index shape = ", edge_index.shape)
-            
-            edge_matrix_file = os.path.join(self.comp_dir, dataset, 'adj_matrix_lr_train_30_5_edge.npy')
-            print("saving edge_list format in :  ", edge_matrix_file)
-            np.save(edge_matrix_file, edge_index, allow_pickle=True)
-            
-            edge_index = edge_type[edge_type.nonzero()]
-            edge_index = edge_index.toarray()
-            edge_index = edge_index.squeeze(0)
-            print("edge_type shape = ", edge_index.shape)
-            edge_matrix_file = os.path.join(self.comp_dir, dataset, 'edge_type_lr_train_30_5_edge.npy')
-            print("saving edge_type edge list format in :  ", edge_matrix_file)
-            np.save(edge_matrix_file, edge_index, allow_pickle=True)
-        
-            hrs, mins, secs = self.calc_elapsed_time(start, time.time())
-            print("Done. Took {}hrs and {}mins and {}secs\n".format(hrs, mins, secs))
+            edge_type_file = 'edge_type_lr_train_30_5'
+            self.save_adj_matrix(self, dataset, adj_file, edge_type_file)
+
         return None
     
     
     
     
-    """create and save the initial node representations of each node of the graph"""
+    
     def create_feat_matrix(self, binary=True):
+        """create and save the initial node representations of each node of the graph"""
+        
         labels = ['fake', 'real']
         for dataset in self.datasets:
             print("\n\n" + "-"*100 + "\n \t\tAnalyzing  {} dataset  for feature_matrix\n".format(dataset) + '-'*100)
@@ -488,47 +461,12 @@ class GCN_PreProcess():
             user2id = json.load(open(user2id_file, 'r'))  
             N = len(train_docs) + len(val_docs) + len(user2id)
             
-            vocab = {}
-            vocab_size=0
-            start = time.time()
             vocab_file = os.path.join(self.comp_dir, dataset,'vocab_lr_30_5.json')
-            if not os.path.isfile(vocab_file):
-                print("\nBuilding vocabulary...")               
-                for label in labels:
-                    src_doc_dir = os.path.join(self.data_dir, 'base_data', dataset, label)
-                    for root, dirs, files in os.walk(src_doc_dir):
-                        for file in files:
-                            doc = file.split('.')[0]
-                            if str(doc) in train_docs and str(doc) in doc2id:
-                                src_file_path = os.path.join(root, file)
-                                with open(src_file_path, 'r') as f:
-                                    file_content = json.load(f)
-                                    text = file_content['text'].lower()[:500]
-                                    text = re.sub(r'#[\w-]+', 'hashtag', text)
-                                    text = re.sub(r'https?://\S+', 'url', text)
-                                    # text = re.sub(r"[^A-Za-z(),!?\'`]", " ", text)
-                                    text = nltk.word_tokenize(text)
-                                    for token in text:
-                                        if token not in vocab.keys():
-                                            vocab[token] = vocab_size
-                                            vocab_size+=1
-                    
-        
-                    hrs, mins, secs = self.calc_elapsed_time(start, time.time())
-                    print("Done. Took {}hrs and {}mins and {}secs\n".format(hrs, mins, secs))
-                    print("Size of vocab =  ", vocab_size)
-                    print("Saving vocab for  {}  at:  {}".format(dataset, vocab_file))
-                    with open(vocab_file, 'w+') as v:
-                        json.dump(vocab, v)
-                
+            vocab = self.build_vocab(vocab_file, dataset, train_docs, doc2id)
+            vocab_size = len(vocab)
+            stop_words = set(stopwords.words('english'))
             
-            else:
-                print("\nReading vocabulary...")
-                vocab_file = os.path.join(self.comp_dir, dataset, 'vocab_lr_30_5.json')
-                vocab = json.load(open(vocab_file, 'r'))
-                vocab_size = len(vocab)
-            
-            
+
             feat_matrix = lil_matrix((N, vocab_size))
             print("\nSize of feature matrix = ", feat_matrix.shape)
             print("\nCreating feat_matrix entries for docs nodes...")
@@ -556,6 +494,7 @@ class GCN_PreProcess():
                                     text = text.replace('\n', ' ')
                                     # text = re.sub(r"[^A-Za-z(),!?\'`]", " ", text)
                                     text = nltk.word_tokenize(text)
+                                    text = [w for w in text if not w in stop_words]
                                     vector = np.zeros(len(vocab))
                                     for token in text:
                                         if token in vocab.keys():
@@ -579,7 +518,6 @@ class GCN_PreProcess():
             # user_splits = json.load(open('./data/complete_data/{}/user_splits.json'.format(dataset), 'r'))
             # train_users = user_splits['train_users']
             src_dir = os.path.join(self.comp_dir, dataset, 'complete')
-            user_contexts = ['user_followers_filtered', 'user_following_filtered']
             for root, dirs, files in os.walk(src_dir):
                 for count, file in enumerate(files):
                     print_iter = int(len(files) / 10)
@@ -657,9 +595,9 @@ class GCN_PreProcess():
             doc2id_file = os.path.join(self.comp_dir, dataset, 'doc2id_lr_train_30_5.json')
             adj_matrix_file = os.path.join(self.comp_dir, dataset, 'adj_matrix_lr_train_30_5.npz')
             
-            doc2id = json.load(open(doc2id_file, 'r')) 
+            self.doc2id = json.load(open(doc2id_file, 'r')) 
             adj_matrix = load_npz(adj_matrix_file)
-            N,_ = adj_matrix.shape
+            self.N, _ = adj_matrix.shape
             del adj_matrix
             
             doc_splits_file = os.path.join(self.comp_dir, dataset, 'doc_splits.json') 
@@ -670,8 +608,7 @@ class GCN_PreProcess():
             split_docs = train_docs + val_docs
                 
             print("\nCreating doc2labels dictionary...")
-            doc2labels = {}
-            c=0
+            self.doc2labels = {}
             user_contexts = ['fake', 'real']
             for user_context in user_contexts:
                 data_dir = os.path.join(self.data_dir, 'complete_data', dataset, user_context)
@@ -680,47 +617,18 @@ class GCN_PreProcess():
                     for count,file in enumerate(files):
                         doc= root.split('\\')[-1]
                         if str(doc) in split_docs:
-                            doc2labels[str(doc)] = label
+                            self.doc2labels[str(doc)] = label
             
             # print(len(doc2labels.keys()))
             # print(len(doc2id.keys()) - len(doc_splits['test_docs']))
-            assert len(doc2labels.keys()) == len(doc2id.keys()) - len(doc_splits['test_docs'])
-            print("Len of doc2labels  = {}\n".format(len(doc2labels)))
-            labels_dict_file = os.path.join(self.comp_dir, dataset, 'doc2labels_lr_train_30_5.json')
-            print("Saving labels_dict for  {} at:  {}".format(dataset, labels_dict_file))
-            with open(labels_dict_file, 'w+') as v:
-                json.dump(doc2labels, v)
+            assert len(self.doc2labels.keys()) == len(self.doc2id.keys()) - len(doc_splits['test_docs'])
+            print("Len of doc2labels  = {}\n".format(len(self.doc2labels)))
+            self.doc2labels_file = 'doc2labels_lr_train_30_5.json'
+            self.labels_list_file ='labels_list_lr_train_30_5.json'
+            self.all_labels_file = 'all_labels_lr_train_30_5.json'
             
-            labels_list = np.zeros(N)
-            for key,value in doc2labels.items():
-                labels_list[doc2id[str(key)]] = value
-                          
-            # Sanity Checks
-            # print(sum(labels_list))
-            # print(len(labels_list))
-            # print(sum(labels_list[2402:]))
-            # print(sum(labels_list[:2402]))
+            self.save_labels(dataset)
             
-            filename = os.path.join(self.comp_dir, dataset, 'labels_list_lr_train_30_5.json')
-            temp_dict = {}
-            temp_dict['labels_list'] = list(labels_list)
-            print("Labels list construction done! Saving in :   {}".format(filename))
-            with open(filename, 'w+') as v:
-                json.dump(temp_dict, v)
-            
-            
-            # Create the all_labels file
-            all_labels = np.zeros(N)
-            all_labels_data_file = os.path.join(self.comp_dir, dataset, 'all_labels_lr_train_30_5.json')
-            for doc in doc2labels.keys():
-                all_labels[doc2id[str(doc)]] = doc2labels[str(doc)]
-            
-            temp_dict = {}
-            temp_dict['all_labels'] = list(all_labels)
-            print("Sum of labels this test set = ", sum(all_labels))
-            print("Len of labels = ", len(all_labels))
-            with open(all_labels_data_file, 'w+') as j:
-                json.dump(temp_dict, j)
         return None
     
     
@@ -731,71 +639,17 @@ class GCN_PreProcess():
         for dataset in self.datasets:
             print("\n\n" + "-"*100 + "\n \t\t   Creating split masks for {}\n".format(dataset) + '-'*100)
             
-            doc2id_train_file = os.path.join(self.comp_dir, dataset, 'doc2id_lr_train_30_5.json')
-            doc_splits_file = os.path.join(self.comp_dir, dataset, 'doc_splits.json')
-            train_adj_matrix_file = os.path.join(self.comp_dir, dataset, 'adj_matrix_lr_train_30_5.npz')
+            self.doc2id_train_file = os.path.join(self.comp_dir, dataset, 'doc2id_lr_train_30_5.json')
+            self.doc_splits_file = os.path.join(self.comp_dir, dataset, 'doc_splits.json')
+            self.train_adj_matrix_file = os.path.join(self.comp_dir, dataset, 'adj_matrix_lr_train_30_5.npz')
             
-            doc2id = json.load(open(doc2id_train_file, 'r'))
-            doc_splits = json.load(open(doc_splits_file, 'r'))
-            train_adj = load_npz(train_adj_matrix_file)
-            
-            train_docs = doc_splits['train_docs']
-            val_docs = doc_splits['val_docs']
-            
-            train_n, _ = train_adj.shape
-            del train_adj
-            
-            train_mask, val_mask = np.zeros(train_n), np.zeros(train_n) # np.zeros(test_n)
-            representation_mask = np.ones(train_n)
-            
-            not_in_either=0
-            for doc, id in doc2id.items():
-                if str(doc) in train_docs:
-                    train_mask[doc2id[str(doc)]] = 1
-                elif str(doc) in val_docs:
-                    val_mask[doc2id[str(doc)]] = 1
-                    representation_mask[doc2id[str(doc)]] = 0
-                else:
-                    not_in_either+=1
-            
-            print("\nNot_in_either = ", not_in_either)
-            print("train_mask sum = ", sum(train_mask))
-            print("val_mask sum = ", sum(val_mask))
-            print("repr_mask sum = ", sum(representation_mask))
-            
-
-            temp_dict = {}
-            temp_dict['train_mask'] = list(train_mask)
-            temp_dict['val_mask'] = list(val_mask)
-            temp_dict['repr_mask'] = list(representation_mask)
-            split_mask_file = os.path.join(self.comp_dir, dataset, 'split_mask_lr_30_5.json')
-            print("Writing split mask file in : ", split_mask_file)
-            with open(split_mask_file, 'w+') as j:
-                json.dump(temp_dict, j)               
+            self.split_mask_file = 'split_mask_lr_30_5.json'
+            self.create_split_masks_main(dataset)
                   
         return None
     
     
-   
-
-    def get_label_distribution(self, labels):  
-        fake = labels.count(1)
-        real = labels.count(0)
-        denom = fake+real
-        return fake/denom, real/denom
-    
-
-
-    def calc_elapsed_time(self, start, end):
-        hours, rem = divmod(end-start, 3600)
-        time_hours, time_rem = divmod(end, 3600)
-        minutes, seconds = divmod(rem, 60)
-        time_mins, _ = divmod(time_rem, 60)
-        return int(hours), int(minutes), int(seconds)
-                
-        
-                
-        
+ 
       
 
 
@@ -822,4 +676,4 @@ if __name__== '__main__':
     args, unparsed = parser.parse_known_args()
     config = args.__dict__
     
-    preprocesser = GCN_PreProcess(config, gossipcop=True, politifact = False)
+    preprocesser = GNN_PreProcess_news(config, gossipcop=True, politifact = False)

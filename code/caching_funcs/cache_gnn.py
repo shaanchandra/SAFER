@@ -25,9 +25,7 @@ class Cache_GNN_Embeds():
             self.predict_and_cache_fakenews()
         elif config['data_name'] in ['HealthStory', 'HealthRelease']:
             self.predict_and_cache_fakehealth()
-        
-    
-    
+            
 
     
     def predict_and_cache_fakenews(self):        
@@ -114,9 +112,7 @@ class Cache_GNN_Embeds():
         print("\nSaving user embeddings in : ", user_embed_file)
         torch.save(self.user_cache, user_embed_file)
         
-        
-     
-        
+                
         
         
     def obtain_doc_representations(self):
