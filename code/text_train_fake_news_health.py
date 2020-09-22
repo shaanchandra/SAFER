@@ -53,9 +53,9 @@ if __name__ == '__main__':
                           help='dataset name:  politifact / HealthRelease / HealthStory / gossipcop')
     parser.add_argument('--model_name', type = str, default = 'cnn',
                           help='model name: bilstm / bilstm_pool / bilstm_reg / han / cnn / \
-                              bert-base-cased / bert-large-cased / xlnet-base-cased / xlnet-large-cased / roberta-base / roberta-large')
+                              dbert-base-uncased / xlnet-base-cased / xlnet-large-cased / roberta-base / roberta-large')
     parser.add_argument('--embed_name', type = str, default = 'glove',
-                          help='type of word embeddings used: glove/ elmo/ bert/ xlnet / roberta"')
+                          help='type of word embeddings used: glove/ elmo/ dbert/ xlnet / roberta"')
     parser.add_argument('--optimizer', type = str, default = 'Adam',
                         help = 'Optimizer to use for training')
     parser.add_argument('--loss_func', type = str, default = 'bce_logits',
@@ -121,7 +121,7 @@ if __name__ == '__main__':
     parser.add_argument('--lowercase', type=bool, default=False,
                         help='whether to lowercase the tokens or not')
     parser.add_argument('--freeze', type = bool, default = True,
-                      help='Whether to fine-tune BERT or not (freeze = True will not fine-tune)"')
+                      help='Whether to fine-tune transformer or not (freeze = True will not fine-tune)"')
     
     # Transformer Model params
     parser.add_argument('--output_dir_transf', type=str, default="transf_outputs/",
@@ -222,7 +222,7 @@ if __name__ == '__main__':
     config['n_classes'] = 1            
    
     # Check all provided paths:    
-    if config['embed_name'] not in ['bert', 'xlnet', 'roberta']:
+    if config['embed_name'] not in ['dbert', 'xlnet', 'roberta']:
         config['model_path'] = os.path.join(config['model_checkpoint_path'], config['data_name'], config['embed_name'], config['model_name'])
         config['vis_path'] = os.path.join(config['vis_path'], config['data_name'], config['embed_name'], config['model_name'])
     else:
@@ -238,7 +238,7 @@ if __name__ == '__main__':
         raise ValueError("[!] ERROR: Glove Embeddings path does not exist")
     else:
         print("\nGLOVE embeddings path checked..")
-    if config['embed_name'] not in ['bert', 'xlnet', 'roberta'] and not os.path.exists(config['model_path']):
+    if config['embed_name'] not in ['dbert', 'xlnet', 'roberta'] and not os.path.exists(config['model_path']):
         print("\nCreating checkpoint path for saved models at:  {}\n".format(config['model_path']))
         os.makedirs(config['model_path'])
     else:
@@ -247,9 +247,9 @@ if __name__ == '__main__':
         raise ValueError("[!] ERROR:  data_name is incorrect. This file is for trianin of: HealthStory / HealthRelease / gossipcop / politifact  only !")
     else:
         print("\nData name checked...")
-    if config['model_name'] not in ['bilstm', 'bilstm_pool', 'bilstm_reg', 'han', 'cnn', 'bert-base-cased' , 'bert-large-cased' , 'xlnet-base-cased' , 'xlnet-large-cased', 'roberta-base', 'roberta-large']:
+    if config['model_name'] not in ['bilstm', 'bilstm_pool', 'bilstm_reg', 'han', 'cnn', 'dbert-base-uncased', 'xlnet-base-cased' , 'xlnet-large-cased', 'roberta-base', 'roberta-large']:
         raise ValueError("[!] ERROR:  model_name is incorrect. Choose one of - bilstm / bilstm_pool / bilstm_reg / han / cnn\
-                         bert-base-cased / bert-large-cased / xlnet-base-cased / xlnet-large-cased / roberta-base / roberta-large")
+                         dbert-base-uncased / xlnet-base-cased / xlnet-large-cased / roberta-base / roberta-large")
     else:
         print("\nModel name checked...")
     if not os.path.exists(config['vis_path']):
@@ -262,7 +262,7 @@ if __name__ == '__main__':
 
     
     
-    if config['embed_name'] not in ['bert', 'xlnet', 'roberta']:
+    if config['embed_name'] not in ['dbert', 'xlnet', 'roberta']:
         train_args = None
         # Print args
         print("\n" + "x"*50 + "\n\nRunning training with the following parameters: \n")
@@ -299,8 +299,8 @@ if __name__ == '__main__':
     # Prepare the datasets and iterator for training and evaluation based on Glove or Elmo embeddings
     prep_data = Prepare_Dataset(config)
     if config['embed_name'] == 'glove':
-        config['train_loader'], config['dev_loader'], config['test_loader'] = prep_data.prepare_glove_training()
-    elif config['embed_name'] in ['bert', 'xlnet', 'roberta']:
+        config['train_loader'], config['dev_loader'], config['test_loader'], config['TEXT'] = prep_data.prepare_glove_training()
+    elif config['embed_name'] in ['dbert', 'xlnet', 'roberta']:
         config['train_loader'], config['val_loader'], config['test_loader'] = prep_data.prepare_transformer_training()
     elif config['embed_name']=='elmo' and config['model_name']!='han':
         config['train_data'], config['train_label'], config['val_data'], config['val_labels'], config['test_data'], config['test_label'] = prep_data.prepare_elmo_training()

@@ -128,7 +128,7 @@ class Prepare_Dataset():
         train_loader, dev_loader, test_loader  = BucketIterator.splits((train, val, test), batch_size=self.config['batch_size'], repeat=False, shuffle=True,
                                      sort_within_batch=False, device=device)
 
-        return train_loader, dev_loader, test_loader
+        return train_loader, dev_loader, test_loader, FakeNews_dataset.TEXT
 
 
 

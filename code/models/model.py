@@ -12,17 +12,24 @@ from torch.nn.utils.rnn import pad_packed_sequence, pack_padded_sequence
 from allennlp.modules import Elmo
 from allennlp.modules.elmo import batch_to_ids
 # from simpletransformers.classification import ClassificationModel
-from simpletransformers.experimental.classification import classification_model
+# from simpletransformers.experimental.classification import classification_model
 
 import warnings
 warnings.filterwarnings("ignore")
 sys.path.append("..")
 
-import torch.nn.functional as F
-from sklearn.metrics import f1_score, recall_score, precision_score, accuracy_score
-from torch_geometric.nn import SAGEConv, GCNConv, GraphConv, GATConv, RGCNConv
+from transformers import (DistilBertPreTrainedModel, 
+RobertaModel, 
+DistilBertConfig,
+RobertaConfig,
+DistilBertTokenizer,
+RobertaTokenizer,
+AdamW)
 
 from utils.utils import *
+from utils.data_utils_gnn import *
+from utils.data_utils_txt import *
+from utils.data_utils_hygnn import *
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -117,16 +124,18 @@ class WeightDrop_manual(torch.nn.Module):
 ## Model Classes ##
 ###################
 
-"""
-Main class that controls training and calling of other classes based on corresponding model_name
 
-"""
 class Document_Classifier(nn.Module):
+    """
+    Main class that controls training and calling of other classes based on corresponding model_name
+
+    """
     def __init__(self, config, pre_trained_embeds = None):
         super(Document_Classifier, self).__init__()
 
         self.lstm_dim = config['lstm_dim']
         self.model_name = config['model_name']
+        self.embed_name = config['embed_dim']
         self.fc_dim = config['fc_dim']
         self.num_classes = config['n_classes']
         self.embed_dim = config['embed_dim'] if config['embed_dim']==300 else 2*config['embed_dim']
@@ -174,6 +183,15 @@ class Document_Classifier(nn.Module):
             self.encoder = Kim_CNN(config)
             self.fc_inp_dim = self.num_kernels * len(self.kernel_sizes)
 
+        if config['embed_name'] in ['dbert', 'roberta']:
+            MODEL_CLASSES = {
+                "dbert": (DistilBertConfig, DistilBertPreTrainedModel, DistilBertTokenizerFast),
+                "roberta": (RobertaConfig, RobertaModel, RobertaTokenizerFast),
+            }
+            config_class, _, _ = MODEL_CLASSES[config['embed_name']]
+            self.encoder = Transformer_model(config, config_class)
+            self.fc_inp_dim = config_class.hidden_size
+
         self.classifier = nn.Sequential(nn.Dropout(config["dropout"]), 
                                             nn.Linear(self.fc_inp_dim, self.fc_dim), 
                                             nn.ReLU(), 
@@ -183,28 +201,32 @@ class Document_Classifier(nn.Module):
     def forward(self, inp, sent_lens, doc_lens = 0, arg=0, cache=False):
 
         if self.model_name in ['bilstm' , 'bilstm_pool', 'cnn']:
-            if self.embed_dim ==300:
+            if self.embed_name == 'glove':
                 inp = self.embedding(inp)
             else:
                 inp = self.elmo(inp.contiguous())['elmo_representations'][0]
  
             out = self.encoder(inp.contiguous(), lengths=sent_lens)
-            if not cache:
-                out = self.classifier(out)
+        
+        elif self.embed_name in ['dbert', 'roberta']:
+            out = self.encoder(inp)
+
         # for HAN the embeddings are taken care of in its model class
-        else:
+        elif self.model_name == 'han':
             if self.embed_dim ==300:
                 inp = self.embedding(inp)
                 # out = self.encoder(inp, embedding = self.embedding, sent_lengths = sent_lens, doc_lengths = doc_lens)
                 out = self.encoder(inp, sent_lengths = sent_lens, num_sent_per_document = doc_lens, arg=arg)
-                out = self.classifier(out)
             else:
                 if self.mode == 'multi':
                     inp = inp.reshape((inp.shape[0]*inp.shape[1], inp.shape[2], inp.shape[3]))
                     sent_lens = sent_lens.reshape((sent_lens.shape[0]*sent_lens.shape[1]))
                 inp = self.elmo(inp.contiguous())['elmo_representations'][0]
                 out = self.encoder(inp, sent_lengths = sent_lens, num_sent_per_document = doc_lens, arg = arg)
-                out = self.classifier(out)
+        
+        if not cache:
+            out = self.classifier(out)
+
         return out
 
 
@@ -319,7 +341,63 @@ class BiLSTM_reg(nn.Module):
         return params
 
 
-    
+
+##############################################
+##    Class for BERT-family transformers    ##
+##############################################
+
+class Transformer_model(nn.Module):
+    """
+    The class for training BERT-family transformers 
+    """
+    def __init__(self, config, transf_config):
+        super(Transformer_model, self).__init__()
+
+        MODEL_CLASSES = {
+            "dbert": (DistilBertConfig, DistilBertPreTrainedModel, DistilBertTokenizerFast),
+            "roberta": (RobertaConfig, RobertaModel, RobertaTokenizerFast),
+        }
+        _, model_class, _ = MODEL_CLASSES[config['embed_name']]
+
+        self.model = model_class.from_pretrained(transf_config)
+
+    def forward(inp_ids, attn_mask):
+        out = self.model(inp_ids, attention_mask=attn_mask)[0]
+        return out[:, 0, :]  # first element is BxLxD where we need the first token ([CLS])
+
+
+
+#######################################
+##  Class for KimCNN implementation  ##
+#######################################        
+"""
+The (word) CNN based architecture as propsoed by Kim, et.al(2014) 
+"""
+class Kim_CNN(nn.Module):
+    def __init__(self, config):
+        super(Kim_CNN, self).__init__()
+        self.embed_dim = config['embed_dim'] if config['embed_dim']==300 else 2*config['embed_dim']
+        self.num_classes = config["n_classes"]
+        self.input_channels = 1
+        self.num_kernels = config["kernel_num"]
+        self.kernel_sizes = [int(k) for k in config["kernel_sizes"].split(',')]
+        self.fc_inp_dim = self.num_kernels * len(self.kernel_sizes)
+        self.fc_dim = config['fc_dim']
+
+        self.cnn = nn.ModuleList([nn.Conv2d(self.input_channels, self.num_kernels, (k_size, self.embed_dim)) for k_size in self.kernel_sizes])
+        # self.classifier = nn.Sequential(nn.Dropout(config["dropout"]), nn.Linear(self.fc_inp_dim, self.fc_dim), nn.ReLU(), nn.Linear(self.fc_dim, self.num_classes-1))
+
+
+    def forward(self, inp, embedding = None, lengths=None):
+        # x is (B, L, D)
+        inp = inp.unsqueeze(1)  # (B, Ci, L, D)
+        inp = [F.relu(conv(inp)).squeeze(3) for conv in self.cnn]  # [(B, Co, L), ...]*len(Ks)
+        inp = [F.max_pool1d(i, i.size(2)).squeeze(2) for i in inp]  # [(B, Co), ...]*len(Ks)
+        out = torch.cat(inp, 1) # (B, len(Ks)*Co)
+        # out = self.classifier(out)
+        return out
+
+
 
 ####################################
 ## Classes for HAN implementation ##
@@ -546,38 +624,7 @@ class HAN(nn.Module):
         # sent_attn = torch.index_select(sorted_sent_attn, dim=0, index=recover_idx_sent).squeeze(2)
         return doc_embedding
     
-    
-    
-    
-#######################################
-##  Class for KimCNN implementation  ##
-#######################################        
-"""
-The (word) CNN based architecture as propsoed by Kim, et.al(2014) 
-"""
-class Kim_CNN(nn.Module):
-    def __init__(self, config):
-        super(Kim_CNN, self).__init__()
-        self.embed_dim = config['embed_dim'] if config['embed_dim']==300 else 2*config['embed_dim']
-        self.num_classes = config["n_classes"]
-        self.input_channels = 1
-        self.num_kernels = config["kernel_num"]
-        self.kernel_sizes = [int(k) for k in config["kernel_sizes"].split(',')]
-        self.fc_inp_dim = self.num_kernels * len(self.kernel_sizes)
-        self.fc_dim = config['fc_dim']
 
-        self.cnn = nn.ModuleList([nn.Conv2d(self.input_channels, self.num_kernels, (k_size, self.embed_dim)) for k_size in self.kernel_sizes])
-        # self.classifier = nn.Sequential(nn.Dropout(config["dropout"]), nn.Linear(self.fc_inp_dim, self.fc_dim), nn.ReLU(), nn.Linear(self.fc_dim, self.num_classes-1))
-
-
-    def forward(self, inp, embedding = None, lengths=None):
-        # x is (B, L, D)
-        inp = inp.unsqueeze(1)  # (B, Ci, L, D)
-        inp = [F.relu(conv(inp)).squeeze(3) for conv in self.cnn]  # [(B, Co, L), ...]*len(Ks)
-        inp = [F.max_pool1d(i, i.size(2)).squeeze(2) for i in inp]  # [(B, Co), ...]*len(Ks)
-        out = torch.cat(inp, 1) # (B, len(Ks)*Co)
-        # out = self.classifier(out)
-        return out
     
     
 

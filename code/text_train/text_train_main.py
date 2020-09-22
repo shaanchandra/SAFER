@@ -13,6 +13,7 @@ nltk.download('punkt')
 import torch.nn as nn
 import torch.nn.functional as F
 from sklearn.metrics import classification_report
+from transformers import get_linear_schedule_with_warmup
 
 from models.model import Document_Classifier
 from models.transformer_model import *
@@ -47,30 +48,31 @@ class Doc_Encoder_Main():
         
         
     def init_training_params(self):
-        if self.embed_name not in ['bert', 'xlnet', 'roberta']:
-            if self.embed_name == 'glove':
-                self.model = Document_Classifier(self.config, pre_trained_embeds = self.config['TEXT'].vocab.vectors).to(device)
-            elif self.embed_name == 'elmo':
-                self.model = Document_Classifier(self.config).to(device)
-                
-            if self.config['parallel_computing']:
-                self.model = nn.DataParallel(self.model)  
-                
-            if self.config['optimizer'] == 'Adam':
-                self.optimizer = torch.optim.AdamW(self.model.parameters(), lr = self.config['lr'], weight_decay = self.config['weight_decay'])
-            elif self.config['optimizer'] == 'SGD':
-                self.optimizer = torch.optim.SGD(self.model.parameters(), lr = self.config['lr'], momentum = self.config['momentum'], weight_decay = self.config['weight_decay'])
+        if self.embed_name == 'glove':
+            self.model = Document_Classifier(self.config, pre_trained_embeds = self.config['TEXT'].vocab.vectors).to(device)
+        else:
+            self.model = Document_Classifier(self.config).to(device)
             
-            if self.config['loss_func'] == 'bce_logits':
-                self.criterion = nn.BCEWithLogitsLoss(pos_weight= torch.tensor([self.config['pos_wt']]).to(device))
-            else:
-                self.criterion = nn.BCELoss()
+        if self.config['parallel_computing']:
+            self.model = nn.DataParallel(self.model)  
             
-            
-            if self.config['scheduler'] == 'step':
-                self.scheduler = torch.optim.lr_scheduler.StepLR(self.optimizer, step_size=self.config['lr_decay_step'], gamma = self.config['lr_decay_factor'])
-            elif self.config['scheduler'] == 'multi_step':
-                self.scheduler = torch.optim.lr_scheduler.MultiStepLR(self.optimizer, milestones= [2,5,10,15,20,25,35,45], gamma = self.config['lr_decay_factor'])
+        if self.config['optimizer'] == 'Adam':
+            self.optimizer = torch.optim.AdamW(self.model.parameters(), lr = self.config['lr'], weight_decay = self.config['weight_decay'])
+        elif self.config['optimizer'] == 'SGD':
+            self.optimizer = torch.optim.SGD(self.model.parameters(), lr = self.config['lr'], momentum = self.config['momentum'], weight_decay = self.config['weight_decay'])
+        
+        if self.config['loss_func'] == 'bce_logits':
+            self.criterion = nn.BCEWithLogitsLoss(pos_weight= torch.tensor([self.config['pos_wt']]).to(device))
+        else:
+            self.criterion = nn.BCELoss()
+        
+        
+        if self.config['scheduler'] == 'step':
+            self.scheduler = torch.optim.lr_scheduler.StepLR(self.optimizer, step_size=self.config['lr_decay_step'], gamma = self.config['lr_decay_factor'])
+        elif self.config['scheduler'] == 'multi_step':
+            self.scheduler = torch.optim.lr_scheduler.MultiStepLR(self.optimizer, milestones= [2,5,10,15,20,25,35,45], gamma = self.config['lr_decay_factor'])
+        elif self.config['scheduler'] == 'warmup':
+            self.scheduler = get_linear_schedule_with_warmup(self.optimizer, self.config['warmup_steps'], self.config['train_steps'])
         
         return None
         
@@ -223,12 +225,61 @@ class Doc_Encoder_Main():
             eval_f1, eval_macro_f1, eval_recall, eval_precision, eval_accuracy = evaluation_measures(self.config, np.array(preds_list), np.array(labels_list))
                 
         return eval_f1, eval_macro_f1, eval_precision, eval_recall, eval_accuracy, eval_loss
-            
-            
-            # if test:
-            #     self.generate_summary(np.array(preds_list), np.array(labels_list))
-        
 
+
+    
+    def eval_transformer(self, test = False):
+        self.model.eval()
+        preds_list, labels_list = [], []
+        eval_loss = []
+        batch_loader = self.config['val_loader'] if not test else self.config['test_loader']
+    
+        with torch.no_grad():
+            for iters, batch in enumerate(batch_loader): 
+                preds = self.model(batch['input_ids'], batch['attention_mask'])
+                batch_label = self.batch['labels'].to(device)
+                if self.config['loss_func'] == 'bce':
+                    preds = F.sigmoid(preds)
+                loss = self.criterion(preds,  batch_label.float().squeeze(1).to(device))
+                eval_loss.append(loss.detach().item())
+                if self.config['loss_func'] == 'bce':
+                    preds = (preds>0.5).type(torch.FloatTensor)
+                elif self.config['loss_func'] == 'ce':
+                    preds = F.softmax(preds, dim=1)
+                    preds = torch.argmax(preds, dim=1)
+                preds_list.append(preds.cpu().detach().numpy())
+                labels_list.append(batch.label.cpu().detach().numpy())
+            
+            preds_list = [pred for batch_pred in preds_list for pred in batch_pred]
+            labels_list = [label for batch_labels in labels_list for label in batch_labels]
+            
+            eval_loss = sum(eval_loss)/len(eval_loss)
+            eval_f1, eval_macro_f1, eval_recall, eval_precision, eval_accuracy = evaluation_measures(self.config, np.array(preds_list), np.array(labels_list))
+                
+        return eval_f1, eval_macro_f1, eval_precision, eval_recall, eval_accuracy, eval_loss
+            
+
+    def save_model(self):
+        torch.save({
+                'epoch': self.epoch,
+                'best_val_f1' : self.best_val_f1,
+                'model_state_dict': self.model.state_dict(),
+                # 'model_classif_state_dict': model.classifier.state_dict(),
+                'optimizer_state_dict': self.optimizer.state_dict(),
+            }, os.path.join(self.model_file))
+
+
+    # def save_transformer_model(self):
+    #     # Take care of distributed/parallel training
+    #     model_to_save = self.model.module if hasattr(model, "module") else self.model
+    #     model_to_save.save_pretrained(self.model_file)
+    #     self.tokenizer.save_pretrained(self.model_file)   
+
+    def load_model(self):
+        checkpoint = torch.load(self.model_file)
+        self.model.load_state_dict(checkpoint['model_state_dict'])
+        self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        
                    
     def generate_summary(self, preds, labels):
         target_names = ['False', 'True', 'Unverified']
@@ -252,6 +303,8 @@ class Doc_Encoder_Main():
         # Evaluate on dev set
         if self.embed_name == 'glove':
             self.eval_f1, self.eval_f1_macro, self.eval_precision, self.eval_recall, self.eval_accuracy, self.eval_loss = self.eval_glove()
+        elif self.embed_name in ['dbert', 'roberta']:
+            self.eval_f1, self.eval_f1_macro, self.eval_precision, self.eval_recall, self.eval_accuracy, self.eval_loss = self.eval_transformer()
         elif self.embed_name == 'elmo' and self.model_name != 'han':
             self.eval_f1, self.eval_f1_macro, self.eval_precision, self.eval_recall, self.eval_accuracy, self.eval_loss = self.eval_elmo(self.config['val_data'], self.config['val_labels'])
         elif self.embed_name == 'elmo' and self.model_name == 'han':
@@ -293,27 +346,15 @@ class Doc_Encoder_Main():
             self.best_val_acc = self.eval_accuracy
             self.best_val_recall = self.eval_recall
             self.best_val_precision = self.eval_precision
-            best_model = self.model.state_dict()
             # Save the state and the vocabulary
-            torch.save({
-                'epoch': self.epoch,
-                'best_val_f1' : self.best_val_f1,
-                'model_state_dict': best_model,
-                # 'model_classif_state_dict': model.classifier.state_dict(),
-                'optimizer_state_dict': self.optimizer.state_dict(),
-            }, os.path.join(self.model_file))
+            # self.save_model() if self.config['embed_name'] not in ['dbert', 'roberta'] else self.save_transformer_model()
+            self.save_model()
+            
             
         if self.epoch==1:
             print("Saving model !")
-            best_model = self.model.state_dict()
-            # Save the state and the vocabulary
-            torch.save({
-                'epoch': self.epoch,
-                'best_val_f1' : self.best_val_f1,
-                'model_state_dict': best_model,
-                # 'model_classif_state_dict': model.classifier.state_dict(),
-                'optimizer_state_dict': self.optimizer.state_dict(),
-            }, os.path.join(self.model_file))
+            # self.save_model() if self.config['embed_name'] not in ['dbert', 'roberta'] else self.save_transformer_model()
+            self.save_model()
             
         self.scheduler.step()
             
@@ -448,6 +489,18 @@ class Doc_Encoder_Main():
                 if self.terminate_training:
                     break
         
+        elif self.embed_name in ['dbert', 'xlnet', 'roberta']:
+            for self.epoch in range(self.start_epoch, self.config['max_epoch']+1):
+                for self.iters, self.batch in enumerate(self.config['train_loader']):
+                    self.model.train()
+                    self.preds = self.model(self.batch['input_ids'], self.batch['attention_mask'])
+                    self.batch_label = self.batch['labels'].to(device)
+                    self.train_iters_step()
+                self.train_epoch_step()
+                if self.terminate_training:
+                    break
+
+
         elif self.model_name == 'han' and self.embed_name == 'elmo':
             # for self.epoch in range(1):
             for self.epoch in range(self.start_epoch, self.config['max_epoch']+1):
@@ -495,98 +548,35 @@ class Doc_Encoder_Main():
                 self.train_epoch_step()
                 if self.terminate_training:
                     break
-            
-            
-        elif self.embed_name in ['bert', 'xlnet', 'roberta']:
-            
-            num_labels = 2                
-            self.model = TRANSFORMER(self.embed_name, self.model_name, args = self.train_args, num_labels=num_labels, use_cuda = self.config['use_cuda'], classif_type = self.config['classifier'], \
-                                     extract_embeddings = self.config['extract_embeddings'], sliding_window = self.config['sliding_window'], hidden_dropout_prob= self.config['hidden_dropout_prob'], attention_probs_dropout_prob= self.config['attention_probs_dropout_prob'])
-            
-            # Fine-tune BERT on the train-set
-            self.model.train_model(self.config['train_df'], eval_df=self.config['val_df'], writer= self.config['writer'], freeze= self.config['freeze'])
-            
-            # Load the best model
-            print("\n" + "Loading best model for eval \n" + "-"*35)
-            self.model = TRANSFORMER(self.embed_name, self.train_args['output_dir'], args = self.train_args, num_labels=num_labels, use_cuda = self.config['use_cuda'], classif_type = self.config['classifier'], \
-                                     extract_embeddings = self.config['extract_embeddings'], sliding_window = self.config['sliding_window'], hidden_dropout_prob= self.config['hidden_dropout_prob'], attention_probs_dropout_prob= self.config['attention_probs_dropout_prob'])
-                
-            
-            if not cache:
-                # # Get evaluation results for each set
-                # train_result, _, _, train_stats, train_embeds, train_labels = self.model.eval_model(train_df, test=True)
-                val_result, _, _, val_stats, val_embeds, val_labels = self.model.eval_model(self.config['val_df'], test=True)
-                test_result, _, _, test_stats, test_embeds, test_labels = self.model.eval_model(self.config['test_df'], test=True)
-                print_transformer_results(self.config, val_stats, test_stats, val_result, test_result)
                         
-                        
-            if cache:
-                # # Get evaluation results for each set
-                train_result, _, _, train_stats, train_embeds, train_labels = self.model.eval_model(self.config['train_df'], test=True)
-                val_result, _, _, val_stats, val_embeds, val_labels = self.model.eval_model(self.config['val_df'], test=True)
-                test_result, _, _, test_stats, test_embeds, test_labels = self.model.eval_model(self.config['test_df'], test=True)
-                
-                base_dir = os.path.join('data', 'complete_data', self.config['data_name'])
-                
-                doc_embed_file = os.path.join(base_dir, 'cached_embeds', 'doc_embeds_roberta_lr_{}_train.pt'.format(self.train_args['manual_seed']))
-                print("\nSaving train docs embeddings in : ", doc_embed_file)
-                print(train_embeds.shape)
-                torch.save(train_embeds, doc_embed_file)
-                
-                doc_embed_file = os.path.join(base_dir, 'cached_embeds', 'doc_embeds_roberta_lr_{}_val.pt'.format(self.train_args['manual_seed']))
-                print("\nSaving val docs embeddings in : ", doc_embed_file)
-                print(val_embeds.shape)
-                torch.save(val_embeds, doc_embed_file)
-                
-                doc_embed_file = os.path.join(base_dir, 'cached_embeds', 'doc_embeds_roberta_lr_{}_test.pt'.format(self.train_args['manual_seed']))
-                print("\nSaving test docs embeddings in : ", doc_embed_file)
-                print(test_embeds.shape)
-                torch.save(test_embeds, doc_embed_file)
-                
-                labels_dict = {}
-                labels_dict['train'] = list(map(int, train_labels.cpu().numpy()))
-                labels_dict['val'] = list(map(int, val_labels.cpu().numpy()))
-                labels_dict['test'] = list(map(int, test_labels.cpu().numpy()))
-                labels_file = os.path.join(base_dir, 'cached_embeds', 'roberta_labels_{}.json'.format(self.train_args['manual_seed']))
-                with open(labels_file, 'w+') as json_file:
-                        json.dump(labels_dict, json_file)
-                
-                # Printing results               
-                print_transformer_results(self.config, val_stats, test_stats, val_result, test_result)
-                Cache_Text_Embeds(self.config, self.model)
-
-            
-            self.config['writer'].close()
-            return val_stats, test_stats, val_result['mcc'], test_result['mcc']
-            
-            
-        if self.embed_name not in ['bert', 'xlnet', 'roberta']:
-            # Termination message
-            if self.terminate_training:
-                print("\n" + "-"*100 + "\nTraining terminated early because the Validation loss did not improve for   {}   epochs" .format(self.config['patience']))
-            else:
-                print("\n" + "-"*100 + "\nMaximum epochs of {} reached. Finished training !!".format(self.config['max_epoch']))
-            
-            print("\n" + "-"*50 + "\n\t\tEvaluating on test set\n" + "-"*50)
-            # self.model_file = os.path.join(self.config['model_checkpoint_path'], self.config['data_name'], self.config['model_name'], self.config['model_save_name'])
-            if os.path.isfile(self.model_file):
-                checkpoint = torch.load(self.model_file)
-                self.model.load_state_dict(checkpoint['model_state_dict'])
-                self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-            else:
-                raise ValueError("No Saved model state_dict found for the chosen model...!!! \nAborting evaluation on test set...".format(self.config['model_name']))
-            if self.embed_name == 'glove':
-                test_f1, test_f1_macro, test_precision, test_recall, test_accuracy, test_loss = self.eval_glove(test=True)
-            elif self.model_name != 'han' and self.embed_name == 'elmo':
-                test_f1, test_f1_macro, test_precision, test_recall, test_accuracy, test_loss = self.eval_elmo(test_data, test_label)
-            elif self.model_name == 'han' and self.embed_name == 'elmo':
-                test_f1, test_f1_macro, test_precision, test_recall, test_accuracy, test_loss = self.eval_han_elmo(test= True)
-            print_test_stats(test_accuracy, test_precision, test_recall, test_f1, test_f1_macro, self.best_val_acc, self.best_val_precision, self.best_val_recall, self.best_val_f1)
-            
-            if cache:
-                Cache_Text_Embeds(self.config, self.model)
-            self.config['writer'].close()
-            return  self.best_val_f1 , self.best_val_acc, self.best_val_recall, self.best_val_precision, test_f1, test_f1_macro, test_accuracy, test_recall, test_precision
+          
+        # Termination message
+        if self.terminate_training:
+            print("\n" + "-"*100 + "\nTraining terminated early because the Validation loss did not improve for   {}   epochs" .format(self.config['patience']))
+        else:
+            print("\n" + "-"*100 + "\nMaximum epochs of {} reached. Finished training !!".format(self.config['max_epoch']))
+        
+        print("\n" + "-"*50 + "\n\t\tEvaluating on test set\n" + "-"*50)
+        # self.model_file = os.path.join(self.config['model_checkpoint_path'], self.config['data_name'], self.config['model_name'], self.config['model_save_name'])
+        if os.path.isfile(self.model_file):
+            # self.load_model() if self.self.embed_name not in ['roberta', 'dbert'] else self.load_transformer_model()
+            self.load_model()            
+        else:
+            raise ValueError("No Saved model state_dict found for the chosen model...!!! \nAborting evaluation on test set...".format(self.config['model_name']))
+        if self.embed_name == 'glove':
+            test_f1, test_f1_macro, test_precision, test_recall, test_accuracy, test_loss = self.eval_glove(test=True)
+        elif self.model_name != 'han' and self.embed_name == 'elmo':
+            test_f1, test_f1_macro, test_precision, test_recall, test_accuracy, test_loss = self.eval_elmo(test_data, test_label)
+        elif self.model_name == 'han' and self.embed_name == 'elmo':
+            test_f1, test_f1_macro, test_precision, test_recall, test_accuracy, test_loss = self.eval_han_elmo(test= True)
+        elif self.embed_name in ['roberta', 'dbert']:
+            test_f1, test_f1_macro, test_precision, test_recall, test_accuracy, test_loss = self.eval_transformer(test=True)
+        print_test_stats(test_accuracy, test_precision, test_recall, test_f1, test_f1_macro, self.best_val_acc, self.best_val_precision, self.best_val_recall, self.best_val_f1)
+        
+        if cache:
+            Cache_Text_Embeds(self.config, self.model)
+        self.config['writer'].close()
+        return  self.best_val_f1 , self.best_val_acc, self.best_val_recall, self.best_val_precision, test_f1, test_f1_macro, test_accuracy, test_recall, test_precision
                     
                 
                 
