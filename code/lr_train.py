@@ -26,6 +26,9 @@ sys.path.append("..")
 
 from models.model import *
 from utils.utils import *
+from utils.data_utils_gnn import *
+from utils.data_utils_txt import *
+from utils.data_utils_hygnn import *
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -386,7 +389,6 @@ if __name__ == '__main__':
         print("\nModel save path checked..")
     
     
-    
 
     # Print args
     print("\n" + "x"*50 + "\n\nRunning training with the following parameters: \n")
@@ -406,7 +408,8 @@ if __name__ == '__main__':
         config['seed']= 21
         print("\nseed= ", seed)
         # Prepare dataset and iterators for training
-        train_loader, val_loader, test_loader = prepare_lr_training(config, seed)
+        prep_data = Prepare_Dataset(config)
+        train_loader, val_loader, test_loader = prep_data.prepare_lr_training(config, seed)
         lr_model = LR_Learner(config)
         f1, macro_f1, acc = lr_model.train_main()
         f1_list.append(f1)

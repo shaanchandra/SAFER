@@ -1,4 +1,4 @@
-import os, torch, random, re, torchtext, sys
+import os, torch, random, re, torchtext, sys, time
 import numpy as np
 import nltk, csv, json
 import pandas as pd
@@ -7,6 +7,7 @@ from tqdm import tqdm
 from typing import List, Tuple
 
 from torchtext.data import TabularDataset, Field, NestedField, BucketIterator
+from transformers import  DistilBertTokenizerFast, RobertaTokenizerFast
 import torch.utils.data as data
 import warnings
 sys.path.append("..")
@@ -18,8 +19,15 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 
 ####################################
-########  Helper functions  ########
+#         Helper functions         #
 ####################################
+
+def calc_elapsed_time(start, end):
+    hours, rem = divmod(end-start, 3600)
+    time_hours, time_rem = divmod(end, 3600)
+    minutes, seconds = divmod(rem, 60)
+    time_mins, _ = divmod(time_rem, 60)
+    return int(hours), int(minutes), seconds
 
 def clean_string(string):
     # string = re.sub(r"[^A-Za-z0-9(),!?\'`]", " ", string)
@@ -47,7 +55,150 @@ def clean_string_stop_words_remove(string):
     return tokens
      
         
+
+
+##########################################
+#            Main DATA Hadler            #
+##########################################
+
+class Prepare_Dataset():
+    def __init__(self, config):
+        super(Prepare_Dataset, self).__init__()
+        self.config = config
+
+        self.read_dataset_splits()
+
+
+    def read_dataset_splits(self, verbose=True):
+        print("="*100 + "\n\t\t\t\t\t Preparing Data\n" + "="*100)
+
+        start = time.time()
+        train_data_dir = os.path.join(self.config['data_path'], 'train.tsv')
+        val_data_dir = os.path.join(self.config['data_path'], 'val.tsv')
+        test_data_dir = os.path.join(self.config['data_path'], 'test.tsv')
+            
+        directories = ['train_data_dir', 'val_data_dir', 'test_data_dir']
+        self.train_text, self.val_text, self.test_text = [], [], []
+        self.train_labels, self.val_labels, self.test_labels = [], [], []
         
+        for i in range(len(directories)):
+            data_dir = eval(directories[i])
+            with open(data_dir, encoding = 'utf8') as read_file:
+                rows = csv.reader(read_file, delimiter="\t", quotechar='"')
+                for row in rows:
+                    if i==0:
+                        self.train_text.append(row[0])
+                        self.train_labels.append(row[1])
+                    elif i==1:
+                        self.val_text.append(row[0])
+                        self.val_labels.append(row[1])
+                    else:
+                        self.test_text.append(row[0])
+                        self.test_labels.append(row[1])
+        
+        if verbose:
+            print("\n\n" + "-"*50 + "\nDATA STATISTICS:\n" + "-"*50)
+            print('No. of target classes = ', self.config["n_classes"])
+            print('No. of train instances = ', len(self.train_labels))
+            print('No. of dev instances = ', len(self.val_labels))
+            print('No. of test instances = ', len(self.test_labels))
+        
+            end = time.time()
+            hours, minutes, seconds = calc_elapsed_time(start, end)
+            print("\n"+ "-"*50 + "\nTook  {:0>2} hours: {:0>2} mins: {:05.2f} secs  to Prepare Data\n".format(hours,minutes,seconds))
+
+        return self.train_text, self.train_labels, self.val_text, self.val_labels, self.test_text, self.test_labels
+
+
+
+    def prepare_glove_training(self, verbose=True):
+        data_dir = self.config['data_path']
+        train, val, test = FakeNews_dataset.splits(data_dir, train=os.path.join('train.tsv'),
+               validation=os.path.join('val.tsv'),
+               test=os.path.join('test.tsv'),
+               format='tsv', fields=[('text', FakeNews_dataset.TEXT), ('label', FakeNews_dataset.LABEL), ('id', FakeNews_dataset.ID)])
+    
+        # Build Vocabulary and obtain embeddings for each word in Vocabulary
+        glove_embeds = torchtext.vocab.Vectors(name= self.config['glove_path'], max_vectors = int(5e4))
+        FakeNews_dataset.TEXT.build_vocab(train, val, test, vectors=glove_embeds)
+
+        # Setting 'unk' token as the average of all other embeddings
+        FakeNews_dataset.TEXT.vocab.vectors[FakeNews_dataset.TEXT.vocab.stoi['<unk>']] = torch.mean(FakeNews_dataset.TEXT.vocab.vectors, dim=0)
+
+        train_loader, dev_loader, test_loader  = BucketIterator.splits((train, val, test), batch_size=self.config['batch_size'], repeat=False, shuffle=True,
+                                     sort_within_batch=False, device=device)
+
+        return train_loader, dev_loader, test_loader
+
+
+
+    def prepare_transformer_training(self, verbose=True): 
+        if self.config['embed_name'] == 'dbert':
+            self.tokenizer = DistilBertTokenizerFast.from_pretrained(self.config['model_name'])
+        elif self.config['embed_name'] == 'roberta':
+            self.tokenizer = RobertaTokenizerFast.from_pretrained(self.config['model_name'])
+
+        self.train_encodings = self.tokenizer(self.train_text, truncation=True, padding=True)
+        self.val_encodings = self.tokenizer(self.val_text, truncation=True, padding=True)
+        self.test_encodings = self.tokenizer(self.test_text, truncation=True, padding=True)
+
+        train_dataset = FakeNews_dataset_transformer(self.config, self.train_encodings, self.train_labels)
+        val_dataset = FakeNews_dataset_transformer(self.config, self.val_encodings, self.val_labels)
+        test_dataset = FakeNews_dataset_transformer(self.config, self.test_encodings, self.test_labels)
+
+        train_loader = DataLoader(train_dataset, batch_size=self.config['batch_size'], shuffle=True)
+        val_loader = DataLoader(val_dataset, batch_size=self.config['batch_size'], shuffle=True)
+        test_loader = DataLoader(test_dataset, batch_size=self.config['batch_size'], shuffle=True)
+
+        return train_loader, val_loader, test_loader
+        
+
+
+    def prepare_elmo_training(self, verbose=True):         
+        for i in range(3):
+            # Each ele is a document, that we tokenize
+            if i==0:
+                train_data = [nltk.word_tokenize(ele) for ele in self.train_text]
+            elif i==1:
+                val_data = [nltk.word_tokenize(ele) for ele in self.val_text]
+            else:
+                test_data = [nltk.word_tokenize(ele) for ele in self.test_text]
+        
+        return train_data, self.train_labels, val_data, self.val_labels, test_data, self.test_labels
+
+
+    
+    def prepare_HAN_elmo_training(config):   
+        train_data, val_data, test_data = Dataset_Helper_HAN.get_dataset(config, lowercase_sentences=config['lowercase'])
+        
+        # Getting iterators for each set
+        train_loader, val_loader, test_loader = DataLoader_Helper_HAN.create_dataloaders(
+            train_dataset=train_data,
+            validation_dataset=val_data,
+            test_dataset=test_data,
+            batch_size=config['batch_size'],
+            shuffle=True)  
+        return train_loader, val_loader, test_loader
+
+
+    
+    def prepare_lr_training(config, seed, fold=None):
+        
+        train_dataset = LR_Dataset(config, split='train', seed=seed)
+        val_dataset = LR_Dataset(config, split='val', seed=seed)
+        test_dataset = LR_Dataset(config, split='test', seed=seed)
+        
+        train_loader = torch.utils.data.DataLoader(dataset=train_dataset, batch_size=config['batch_size'], collate_fn=collate_for_lr, shuffle=True)
+        val_loader = torch.utils.data.DataLoader(dataset=val_dataset, batch_size=config['batch_size'], collate_fn=collate_for_lr, shuffle=True)
+        test_loader = torch.utils.data.DataLoader(dataset=test_dataset, batch_size=config['batch_size'], collate_fn=collate_for_lr, shuffle=True)
+            
+        return train_loader, val_loader, test_loader
+
+
+
+    
+
+
         
 #############################################################################
 
@@ -57,134 +208,55 @@ def clean_string_stop_words_remove(string):
     
 
 
-##########################################################
-## FakeNewsNet data pre-processing for GLove embeddings ##
-##########################################################
+#############################################################################
+##   FakeNewsNet and FakeHealth data pre-processing for GLove embeddings   ##
+#############################################################################
 
-class FakeNews(TabularDataset):
+class FakeNews_dataset(TabularDataset):
     TEXT = Field(sequential = True, batch_first=True, lower=True, use_vocab=True, tokenize=clean_string, include_lengths=True)
     LABEL = Field(sequential=False, use_vocab=False, batch_first=True, preprocessing = process_labels)
     ID = Field(sequential=False, use_vocab=False, batch_first=True, preprocessing = process_ids)
     NUM_CLASSES = 2
 
-    @staticmethod
     def sort_key(ex):
         return len(ex.text)
 
-    @classmethod
-    def get_dataset_splits(cls, data_dir, train=os.path.join('train.tsv'),
-               validation=os.path.join('val.tsv'),
-               test=os.path.join('test.tsv'), **kwargs):
-        return super(FakeNews, cls).splits(
-            data_dir, train=train, validation=validation, test=test,
-            format='tsv', fields=[('text', cls.TEXT), ('label', cls.LABEL), ('id', cls.ID)])
 
-    @classmethod
-    def main_handler(cls, config, data_dir, shuffle=True):
+class FakeNews_dataset_CNN(FakeNews_dataset):
+    TEXT = Field(sequential = True, batch_first=True, lower=True, use_vocab=True, tokenize=clean_string_stop_words_remove, include_lengths=True)
+    LABEL = Field(sequential=False, use_vocab=True, batch_first=True, preprocessing=process_labels)
+    ID = Field(sequential=False, use_vocab=False, batch_first=True, preprocessing = process_ids)
 
-        # Getting Data Splits: train, dev, test
-        print("\n\n==>> Loading Data splits and tokenizing each document....")
-        train, val, test = cls.get_dataset_splits(data_dir)
-    
-        # Build Vocabulary and obtain embeddings for each word in Vocabulary
-        print("\n==>> Building Vocabulary and obtaining embeddings....")
-        glove_embeds = torchtext.vocab.Vectors(name= config['glove_path'], max_vectors = int(5e4))
-        cls.TEXT.build_vocab(train, val, test, vectors=glove_embeds)
-
-        # Setting 'unk' token as the average of all other embeddings
-        if config['model_name'] != 'han':
-            cls.TEXT.vocab.vectors[cls.TEXT.vocab.stoi['<unk>']] = torch.mean(cls.TEXT.vocab.vectors, dim=0)
-
-        # Getting iterators for each set
-        print("\n==>> Preparing Iterators....")
-        train_iter, val_iter, test_iter  = BucketIterator.splits((train, val, test), batch_size=config['batch_size'], repeat=False, shuffle=shuffle,
-                                     sort_within_batch=False, device=device)
-        return cls.TEXT, cls.LABEL, train_iter, val_iter, test_iter, train, val, test
-
-
-
-class FakeNews_HAN(FakeNews):
+class FakeNews_dataset_HAN(FakeNews_dataset):
     NESTING = Field(sequential = True, batch_first=True, lower=True, use_vocab=True, tokenize=clean_string)
     TEXT = NestedField(NESTING, tokenize=sent_tokenize, include_lengths = True)
     LABEL = Field(sequential=False, use_vocab=False, batch_first=True, preprocessing=process_labels)
     ID = Field(sequential=False, use_vocab=False, batch_first=True, preprocessing = process_ids)
 
-
-class FakeNews_CNN(FakeNews):
-    TEXT = Field(sequential = True, batch_first=True, lower=True, use_vocab=True, tokenize=clean_string_stop_words_remove, include_lengths=True)
-    LABEL = Field(sequential=False, use_vocab=True, batch_first=True, preprocessing=process_labels)
-    ID = Field(sequential=False, use_vocab=False, batch_first=True, preprocessing = process_ids)
     
 
 
+#############################################################################
+
+#                       Transformer Batching functions                      #
+
+#############################################################################
 
 
-#########################################################
-## FakeHealth data pre-processing for GLove embeddings ##
-#########################################################
-
-class FakeHealth(TabularDataset):
-    TEXT = Field(sequential = True, batch_first=True, lower=True, use_vocab=True, tokenize=clean_string, include_lengths=True)
-    LABEL = Field(sequential=False, use_vocab=False, batch_first=True, preprocessing = process_labels)
-    ID = Field(sequential=False, use_vocab=False, batch_first=True, preprocessing = process_ids)
-    NUM_CLASSES = 2
-
-    @staticmethod
-    def sort_key(ex):
-        return len(ex.text)
-
-    @classmethod
-    def get_dataset_splits(cls, data_dir, fold, **kwargs):
-        # train=os.path.join('train_{}.tsv'.format(fold))
-        # validation=os.path.join('val_{}.tsv'.format(fold))
-        # test=os.path.join('test_{}.tsv'.format(fold))
-        train=os.path.join('train.tsv')
-        validation=os.path.join('val.tsv')
-        test=os.path.join('test.tsv')
-        
-        return super(FakeHealth, cls).splits(
-            data_dir, train=train, validation=validation, test=test,
-            format='tsv', fields=[('text', cls.TEXT), ('label', cls.LABEL), ('id', cls.ID)])
-
-    @classmethod
-    def main_handler(cls, config, data_dir, fold, shuffle=True):
-
-        # Getting Data Splits: train, dev, test
-        print("\n\n==>> Loading Data splits and tokenizing each document....")
-        train, val, test = cls.get_dataset_splits(data_dir, fold)
+class FakeNews_dataset_transformer(torch.utils.data.Dataset):
+    def __init__(self, config, encodings, labels):
+        super(FakeNews_dataset_transformer, self).__init__()
+        self.config = config
+        self.encodings = encodings
+        self.labels = labels
     
-        # Build Vocabulary and obtain embeddings for each word in Vocabulary
-        print("\n==>> Building Vocabulary and obtaining embeddings....")
-        glove_embeds = torchtext.vocab.Vectors(name= config['glove_path'], max_vectors = int(5e4))
-        cls.TEXT.build_vocab(train, val, test, vectors=glove_embeds)
+    def __getitem__(self, idx):
+        item = {key: torch.tensor(val[idx]) for key, val in self.encodings.items()}
+        item['labels'] = torch.tensor(self.labels[idx])
+        return item
 
-        # Getting iterators for each set
-        print("\n==>> Preparing Iterators....")
-        train_iter, val_iter, test_iter  = BucketIterator.splits((train, val, test), batch_size=config['batch_size'], repeat=False, shuffle=shuffle,
-                                     sort_within_batch=False, device=device)
-        return cls.TEXT, cls.LABEL, train_iter, val_iter, test_iter, train, val, test
-
-
-class FakeHealth_HAN(FakeHealth):
-    NESTING = Field(sequential = True, batch_first=True, lower=True, use_vocab=True, tokenize=clean_string)
-    TEXT = NestedField(NESTING, tokenize=sent_tokenize, include_lengths = True)
-    LABEL = Field(sequential=False, use_vocab=False, batch_first=True, preprocessing=process_labels)
-    ID = Field(sequential=False, use_vocab=False, batch_first=True, preprocessing = process_ids)
-
-
-class FakeHealth_CNN(FakeHealth):
-    TEXT = Field(sequential = True, batch_first=True, lower=True, use_vocab=True, tokenize=clean_string_stop_words_remove, include_lengths=True)
-    LABEL = Field(sequential=False, use_vocab=True, batch_first=True, preprocessing=process_labels)
-    ID = Field(sequential=False, use_vocab=False, batch_first=True, preprocessing = process_ids)
-    
-    
-    
-    
-    
-    
-    
-
-
+    def __len__(self):
+        return len(self.labels)
 
 
 #############################################################################

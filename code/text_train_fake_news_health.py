@@ -21,6 +21,9 @@ sys.path.append("..")
 from models.model import *
 from models.transformer_model import *
 from utils.utils import *
+from utils.data_utils_gnn import *
+from utils.data_utils_txt import *
+from utils.data_utils_hygnn import *
 from text_train_main import *
 
 
@@ -294,20 +297,19 @@ if __name__ == '__main__':
         
     
     # Prepare the datasets and iterator for training and evaluation based on Glove or Elmo embeddings
+    prep_data = Prepare_Dataset(config)
     if config['embed_name'] == 'glove':
-        config['train_loader'], config['dev_loader'], config['test_loader'], config['TEXT'], config['LABEL'], config['train_split'], config['val_split'], config['test_split'] = prepare_glove_training(config)
-        config['vocab'] = config['TEXT'].vocab
+        config['train_loader'], config['dev_loader'], config['test_loader'] = prep_data.prepare_glove_training()
     elif config['embed_name'] in ['bert', 'xlnet', 'roberta']:
-        config['train_df'], config['val_df'], config['test_df'] = prepare_transformer_training(config)
+        config['train_loader'], config['val_loader'], config['test_loader'] = prep_data.prepare_transformer_training()
     elif config['embed_name']=='elmo' and config['model_name']!='han':
-        config['train_data'], config['train_label'], config['val_data'], config['val_labels'], config['test_data'], config['test_label'] = prepare_elmo_training(config)
+        config['train_data'], config['train_label'], config['val_data'], config['val_labels'], config['test_data'], config['test_label'] = prep_data.prepare_elmo_training()
         # print(len(train_labels))
     elif config['embed_name']=='elmo' and config['model_name']=='han':
-        config['train_loader'], config['val_loader'], config['test_loader'] = prepare_HAN_elmo_training(config)
+        config['train_loader'], config['val_loader'], config['test_loader'] = prep_data.prepare_HAN_elmo_training(config)
         
            
-        
-    
+
     try:
         doc_encoder = Doc_Encoder_Main(config, train_args)
         doc_encoder.train_main(cache=False)

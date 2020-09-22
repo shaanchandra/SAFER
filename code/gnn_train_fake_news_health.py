@@ -17,6 +17,9 @@ import nltk
 nltk.download('punkt')
 
 from utils.utils import *
+from utils.data_utils_gnn import *
+from utils.data_utils_txt import *
+from utils.data_utils_hygnn import *
 from gnn_train.gnn_train_main import *
 from caching_funcs.cache_gnn import *
 
@@ -150,8 +153,8 @@ if __name__ == '__main__':
         os.makedirs(config['model_path'])
     else:
         print("\nModel save path checked..")
-    if config['model_name'] not in ['gcn', 'graph_sage', 'graph_conv', 'gat', 'rgcn', 'rsage', 'rgat', 'HGCN', 'HNN']:
-        raise ValueError("[!] ERROR:  model_name is incorrect. Choose one of - gcn / graph_sage / graph_conv / gat / rgcn / rsage / rgat / HGCN / HNN")
+    if config['model_name'] not in ['gcn', 'graph_sage', 'graph_conv', 'gat', 'rgcn', 'rgat', 'HGCN', 'HNN']:
+        raise ValueError("[!] ERROR:  model_name is incorrect. Choose one of - gcn / graph_sage / graph_conv / gat / rgcn / rgat / HGCN / HNN")
     else:
         print("\nModel name checked...")
     if not os.path.exists(config['vis_path']):
@@ -173,8 +176,6 @@ if __name__ == '__main__':
     # # Prepare the tensorboard writer
     writer = SummaryWriter(config['vis_path'])
     
-    # Prepare dataset and iterators for training
-    fold =1
     # Seeds for reproduceable runs
     torch.manual_seed(config['seed'])
     torch.cuda.manual_seed(config['seed'])
@@ -183,7 +184,9 @@ if __name__ == '__main__':
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
     
-    config['loader'], config['vocab_size'], config['data'] = prepare_gnn_training(config, fold=fold, verbose=False)
+    # Prepare dataset and iterators for training
+    prep_data = Prepare_GNN_Dataset(config)
+    config['loader'], config['vocab_size'], config['data'] = prep_data.prepare_gnn_training(verbose=False)
     args.n_nodes, args.feat_dim = config['data'].x.shape
     
     
