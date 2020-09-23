@@ -190,7 +190,7 @@ class Document_Classifier(nn.Module):
             }
             config_class, _, _ = MODEL_CLASSES[config['embed_name']]
             self.encoder = Transformer_model(config, config_class)
-            self.fc_inp_dim = config_class.hidden_size
+            self.fc_inp_dim = 768 if 'base' in config['model_name'] else 1024
 
         self.classifier = nn.Sequential(nn.Dropout(config["dropout"]), 
                                             nn.Linear(self.fc_inp_dim, self.fc_dim), 
@@ -198,7 +198,7 @@ class Document_Classifier(nn.Module):
                                             nn.Linear(self.fc_dim, self.num_classes))
         
 
-    def forward(self, inp, sent_lens, doc_lens = 0, arg=0, cache=False):
+    def forward(self, inp, sent_lens=0, doc_lens = 0, arg=0, cache=False, attn_mask=None):
 
         if self.model_name in ['bilstm' , 'bilstm_pool', 'cnn']:
             if self.embed_name == 'glove':
@@ -209,7 +209,7 @@ class Document_Classifier(nn.Module):
             out = self.encoder(inp.contiguous(), lengths=sent_lens)
         
         elif self.embed_name in ['dbert', 'roberta']:
-            out = self.encoder(inp)
+            out = self.encoder(inp, attn_mask)
 
         # for HAN the embeddings are taken care of in its model class
         elif self.model_name == 'han':
@@ -363,7 +363,7 @@ class Transformer_model(nn.Module):
 
     def forward(inp_ids, attn_mask):
         out = self.model(inp_ids, attention_mask=attn_mask)[0]
-        return out[:, 0, :]  # first element is BxLxD where we need the first token ([CLS])
+        return out[:, 0, :]  # first tuple element is BxLxD where we need the first token ([CLS])
 
 
 

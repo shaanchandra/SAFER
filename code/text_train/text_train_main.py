@@ -18,6 +18,8 @@ from transformers import get_linear_schedule_with_warmup
 from models.model import Document_Classifier
 from models.transformer_model import *
 from utils.utils import *
+from utils.data_utils import *
+from text_train_main import *
 from caching_funcs.cache_text import *
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -25,7 +27,7 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 
 class Doc_Encoder_Main():
-    def __init__(self, config, train_args=None):
+    def __init__(self, config):
         self.best_val_acc, self.best_val_f1, self.best_val_recall, self.best_val_precision = 0, 0, 0, 0
         self.preds_list, self.labels_list = [] , []
         self.train_f1, self.train_precision, self.train_recall, self.train_accuracy = 0,0,0,0
@@ -173,6 +175,7 @@ class Doc_Encoder_Main():
                 preds = self.model(batch_ids.to(device), sen_lens)
                 if self.config['loss_func'] == 'bce':
                     preds = F.sigmoid(preds)
+                preds = preds.squeeze(1).to(device) if self.config['loss_func'] == 'bce_logits' else preds.to(device)
                 loss = self.criterion(preds,  batch_label.float().to(device))
                 eval_loss.append(loss.detach().item())
                 if self.config['loss_func'] == 'bce':
@@ -208,6 +211,8 @@ class Doc_Encoder_Main():
                 preds = self.model(batch.text[0].to(device), batch.text[1].to(device))
                 if self.config['loss_func'] == 'bce':
                     preds = F.sigmoid(preds)
+
+                preds = preds.squeeze(1).to(device) if self.config['loss_func'] == 'bce_logits' else preds.to(device)
                 loss = self.criterion(preds,  batch.label.float().squeeze(1).to(device))
                 eval_loss.append(loss.detach().item())
                 if self.config['loss_func'] == 'bce':
@@ -236,11 +241,13 @@ class Doc_Encoder_Main():
     
         with torch.no_grad():
             for iters, batch in enumerate(batch_loader): 
-                preds = self.model(batch['input_ids'], batch['attention_mask'])
-                batch_label = self.batch['labels'].to(device)
+                preds = self.model(inp=batch['input_ids'], attn_mask= batch['attention_mask'])
+                batch_label = batch['labels'].to(device)
                 if self.config['loss_func'] == 'bce':
                     preds = F.sigmoid(preds)
-                loss = self.criterion(preds,  batch_label.float().squeeze(1).to(device))
+                
+                preds = preds.squeeze(1).to(device) if self.config['loss_func'] == 'bce_logits' else preds.to(device)
+                loss = self.criterion(preds,  batch_label.float().to(device))
                 eval_loss.append(loss.detach().item())
                 if self.config['loss_func'] == 'bce':
                     preds = (preds>0.5).type(torch.FloatTensor)
@@ -248,7 +255,7 @@ class Doc_Encoder_Main():
                     preds = F.softmax(preds, dim=1)
                     preds = torch.argmax(preds, dim=1)
                 preds_list.append(preds.cpu().detach().numpy())
-                labels_list.append(batch.label.cpu().detach().numpy())
+                labels_list.append(batch_label.cpu().detach().numpy())
             
             preds_list = [pred for batch_pred in preds_list for pred in batch_pred]
             labels_list = [label for batch_labels in labels_list for label in batch_labels]
@@ -266,20 +273,13 @@ class Doc_Encoder_Main():
                 'model_state_dict': self.model.state_dict(),
                 # 'model_classif_state_dict': model.classifier.state_dict(),
                 'optimizer_state_dict': self.optimizer.state_dict(),
-            }, os.path.join(self.model_file))
-
-
-    # def save_transformer_model(self):
-    #     # Take care of distributed/parallel training
-    #     model_to_save = self.model.module if hasattr(model, "module") else self.model
-    #     model_to_save.save_pretrained(self.model_file)
-    #     self.tokenizer.save_pretrained(self.model_file)   
+            }, os.path.join(self.model_file))  
 
     def load_model(self):
         checkpoint = torch.load(self.model_file)
         self.model.load_state_dict(checkpoint['model_state_dict'])
         self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-        
+
                    
     def generate_summary(self, preds, labels):
         target_names = ['False', 'True', 'Unverified']
@@ -393,6 +393,8 @@ class Doc_Encoder_Main():
     def train_iters_step(self):
         if self.config['loss_func'] == 'bce':
             self.preds = F.sigmoid(self.preds)
+        
+        self.preds = self.preds.squeeze(1).to(device) if self.config['loss_func'] == 'bce_logits' else self.preds.to(device)
         if self.embed_name == 'glove':
             self.loss = self.criterion(self.preds,  self.batch.label.float().squeeze(1).to(device)) # .long() for pheme 3-class
         else:
@@ -411,7 +413,7 @@ class Doc_Encoder_Main():
             self.preds = (self.preds>0.5).type(torch.FloatTensor)
         elif self.config['loss_func'] == 'bce_logits': 
             self.preds = F.sigmoid(self.preds)
-            self.preds = (self.preds>self.threshold).type(torch.FloatTensor).squeeze(1)
+            self.preds = (self.preds>0.5).type(torch.FloatTensor).squeeze(1)
             
         if self.embed_name == 'glove':
             self.preds_list.append(self.preds.cpu().detach().numpy())
@@ -493,7 +495,7 @@ class Doc_Encoder_Main():
             for self.epoch in range(self.start_epoch, self.config['max_epoch']+1):
                 for self.iters, self.batch in enumerate(self.config['train_loader']):
                     self.model.train()
-                    self.preds = self.model(self.batch['input_ids'], self.batch['attention_mask'])
+                    self.preds = self.model(inp=self.batch['input_ids'], attn_mask=self.batch['attention_mask'])
                     self.batch_label = self.batch['labels'].to(device)
                     self.train_iters_step()
                 self.train_epoch_step()
