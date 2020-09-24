@@ -31,8 +31,7 @@ class Cache_GNN_Embeds():
     def predict_and_cache_fakenews(self):        
         print("\n\nCaching FakeNews dataset : ", self.config['data_name'])
         checkpoint = torch.load(self.model_file)
-        self.model.load_state_dict(checkpoint['model_state_dict'])  
-        
+        self.model.load_state_dict(checkpoint['model_state_dict'])          
 
         node2id_file = os.path.join(self.comp_dir, 'node2id_lr_30_30.json')
         docs_splits_file = os.path.join(self.comp_dir, 'doc_splits_lr.json')
@@ -49,8 +48,7 @@ class Cache_GNN_Embeds():
         
         
     
-    def predict_and_cache_fakehealth(self):
-        
+    def predict_and_cache_fakehealth(self):        
         print("\n\nCaching FakeHealth dataset : ", self.config['data_name'])
         checkpoint = torch.load(self.model_file)
         self.model.load_state_dict(checkpoint['model_state_dict'])

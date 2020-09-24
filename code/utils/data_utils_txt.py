@@ -80,6 +80,7 @@ class Prepare_Dataset():
         directories = ['train_data_dir', 'val_data_dir', 'test_data_dir']
         self.train_text, self.val_text, self.test_text = [], [], []
         self.train_labels, self.val_labels, self.test_labels = [], [], []
+        self.train_ids, self.val_ids, self.test_ids = [], [], []
         
         for i in range(len(directories)):
             data_dir = eval(directories[i])
@@ -89,12 +90,15 @@ class Prepare_Dataset():
                     if i==0:
                         self.train_text.append(row[0])
                         self.train_labels.append(row[1])
+                        self.train_ids.append(row[2])
                     elif i==1:
                         self.val_text.append(row[0])
                         self.val_labels.append(row[1])
+                        self.test_ids.append(row[2])
                     else:
                         self.test_text.append(row[0])
                         self.test_labels.append(row[1])
+                        self.test_ids.append(row[2])
         
         if verbose:
             print("\n\n" + "-"*50 + "\nDATA STATISTICS:\n" + "-"*50)
@@ -106,8 +110,6 @@ class Prepare_Dataset():
             end = time.time()
             hours, minutes, seconds = calc_elapsed_time(start, end)
             print("\n"+ "-"*50 + "\nTook  {:0>2} hours: {:0>2} mins: {:05.2f} secs  to Prepare Data\n".format(hours,minutes,seconds))
-
-        return self.train_text, self.train_labels, self.val_text, self.val_labels, self.test_text, self.test_labels
 
 
 
@@ -142,9 +144,9 @@ class Prepare_Dataset():
         self.val_encodings = self.tokenizer(self.val_text, truncation=True, padding=True)
         self.test_encodings = self.tokenizer(self.test_text, truncation=True, padding=True)
 
-        train_dataset = FakeNews_dataset_transformer(self.config, self.train_encodings, self.train_labels)
-        val_dataset = FakeNews_dataset_transformer(self.config, self.val_encodings, self.val_labels)
-        test_dataset = FakeNews_dataset_transformer(self.config, self.test_encodings, self.test_labels)
+        train_dataset = FakeNews_dataset_transformer(self.config, self.train_encodings, self.train_labels, self.train_ids)
+        val_dataset = FakeNews_dataset_transformer(self.config, self.val_encodings, self.val_labels, self.val_ids)
+        test_dataset = FakeNews_dataset_transformer(self.config, self.test_encodings, self.test_labels, self.test_ids)
 
         train_loader = DataLoader(train_dataset, batch_size=self.config['batch_size'], shuffle=True)
         val_loader = DataLoader(val_dataset, batch_size=self.config['batch_size'], shuffle=True)
@@ -244,15 +246,17 @@ class FakeNews_dataset_HAN(FakeNews_dataset):
 
 
 class FakeNews_dataset_transformer(torch.utils.data.Dataset):
-    def __init__(self, config, encodings, labels):
+    def __init__(self, config, encodings, labels, ids):
         super(FakeNews_dataset_transformer, self).__init__()
         self.config = config
         self.encodings = encodings
         self.labels = labels
+        self.ids = ids
     
     def __getitem__(self, idx):
         item = {key: torch.tensor(val[idx]) for key, val in self.encodings.items()}
         item['labels'] = torch.tensor(self.labels[idx])
+        item['ids'] = torch.tensor(self.ids[idx])
         return item
 
     def __len__(self):
