@@ -18,8 +18,9 @@ from transformers import get_linear_schedule_with_warmup
 from models.model import Document_Classifier
 from models.transformer_model import *
 from utils.utils import *
-from utils.data_utils import *
-from text_train_main import *
+from utils.data_utils_gnn import *
+from utils.data_utils_txt import *
+from utils.data_utils_hygnn import *
 from caching_funcs.cache_text import *
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -31,7 +32,7 @@ class Doc_Encoder_Main():
         self.best_val_acc, self.best_val_f1, self.best_val_recall, self.best_val_precision = 0, 0, 0, 0
         self.preds_list, self.labels_list = [] , []
         self.train_f1, self.train_precision, self.train_recall, self.train_accuracy = 0,0,0,0
-        self.train_loss = []
+        self.loss_list = []
         self.prev_val_loss, self.not_improved  = 0, 0
         self.best_val_loss = 1000
         self.total_iters, self.threshold = 0,0
@@ -43,7 +44,6 @@ class Doc_Encoder_Main():
         self.preds, self.loss = 0, 0
         self.start = time.time()
         self.config = config
-        self.train_args = train_args
         
         # Initialize the model, optimizer and loss function
         self.init_training_params()        
@@ -158,110 +158,69 @@ class Doc_Encoder_Main():
                 
             eval_loss = sum(eval_loss)/len(eval_loss) 
         return best_f1, eval_precision, eval_recall, eval_accuracy, eval_loss
-                
-            
-    
-    def eval_elmo(self, data, labels):
-        self.model.eval()
-        preds_list, labels_list, eval_loss = [],[], []
-        rand_idxs = np.random.permutation(len(data))
-        data_shuffle = [data[i] for i in rand_idxs]
-        label_shuffle = [labels[i] for i in rand_idxs]
+
+
+
+    def calculate_loss(self, preds, batch_label, grad_step=False):
+        if self.config['loss_func'] == 'bce':
+            preds = F.sigmoid(preds)        
+        preds = preds.squeeze(1).to(device) if self.config['loss_func'] == 'bce_logits' else preds.to(device)
+        loss = self.criterion(preds,  batch_label.float().squeeze(1).to(device))
+
+        if grad_step:
+            self.optimizer.zero_grad()
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(self.model.parameters(), 5)
+            self.optimizer.step()
         
-        total_iters = int(np.ceil(len(labels)/self.config['batch_size']))
-        with torch.no_grad():
-            for iters in range(total_iters):
-                batch_ids, batch_label, sen_lens = get_elmo_batches(self.config, total_iters, iters, data_shuffle, label_shuffle)  
-                preds = self.model(batch_ids.to(device), sen_lens)
-                if self.config['loss_func'] == 'bce':
-                    preds = F.sigmoid(preds)
-                preds = preds.squeeze(1).to(device) if self.config['loss_func'] == 'bce_logits' else preds.to(device)
-                loss = self.criterion(preds,  batch_label.float().to(device))
-                eval_loss.append(loss.detach().item())
-                if self.config['loss_func'] == 'bce':
-                    preds = (preds>0.5).type(torch.FloatTensor)
-                elif self.config['loss_func'] == 'ce':
-                    preds = F.softmax(preds, dim=1)
-                    preds = torch.argmax(preds, dim=1)
-                    
-                preds_list.append(preds.cpu().detach().numpy())
-                labels_list.append(batch_label.cpu().detach().numpy())
-                
-            preds_list = [pred for batch_pred in preds_list for pred in batch_pred]
-            labels_list = [label for batch_labels in labels_list for label in batch_labels]
-            
-            eval_f1, eval_f1_macro, eval_recall, eval_precision, eval_accuracy = evaluation_measures(self.config, np.array(preds_list), np.array(labels_list))
-            
-            eval_loss = sum(eval_loss)/len(eval_loss)
-            # if test:
-            #     self.generate_summary(np.array(preds_list), np.array(labels_list))
-        return eval_f1, eval_f1_macro, eval_precision, eval_recall, eval_accuracy, eval_loss
-            
-        
-  
-      
-    def eval_glove(self, test = False):
+        if self.config['loss_func'] == 'bce':
+            preds = (preds>0.5).type(torch.FloatTensor)
+        elif self.config['loss_func'] == 'ce':
+            preds = F.softmax(preds, dim=1)
+            preds = torch.argmax(preds, dim=1)
+        elif self.config['loss_func'] == 'bce_logits': 
+            preds = F.sigmoid(preds)
+            preds = (preds>0.5).type(torch.FloatTensor).squeeze(1)
+
+        self.preds_list.append(preds.cpu().detach().numpy())
+        self.labels_list.append(batch_label.cpu().detach().numpy())
+        self.loss_list.append(loss.detach().item())
+
+
+    
+    def eval_model(self, test = False):
         self.model.eval()
-        preds_list, labels_list = [], []
-        eval_loss = []
-        batch_loader = self.config['dev_loader'] if not test else self.config['test_loader']
+        self.preds_list, self.labels_list = [], []
+        self.loss_list = []        
     
         with torch.no_grad():
-            for iters, batch in enumerate(batch_loader): 
-                preds = self.model(batch.text[0].to(device), batch.text[1].to(device))
-                if self.config['loss_func'] == 'bce':
-                    preds = F.sigmoid(preds)
+            if self.config['embed_name'] == 'elmo':
+                data = self.config['val_data'] if not test else self.config['test_data']
+                labels = self.config['val_labels'] if not test else self.config['test_labels']
+                rand_idxs = np.random.permutation(len(data))
+                data_shuffle = [data[i] for i in rand_idxs]
+                label_shuffle = [labels[i] for i in rand_idxs]
+                total_iters = int(np.ceil(len(labels)/self.config['batch_size']))
+                for iters in range(total_iters):
+                    batch_ids, batch_label, sen_lens = get_elmo_batches(self.config, total_iters, iters, data_shuffle, label_shuffle)  
+                    preds = self.model(batch_ids.to(device), sen_lens)
+                    self.calculate_loss(preds, batch_label)
+            else:
+                batch_loader = self.config['val_loader'] if not test else self.config['test_loader']
+                for iters, batch in enumerate(batch_loader): 
+                    if self.config['embed_name'] == 'glove':
+                        preds = self.model(inp=batch.text[0].to(device), sent_lens=batch.text[1].to(device))
+                        batch_label = batch.label
+                    elif self.config['embed_name'] in ['dbert', 'roberta']:
+                        preds = self.model(inp= batch['input_ids'], attn_mask = batch['attention_mask'])
+                        batch_label = batch['labels'].to(device)
+                    self.calculate_loss(preds, batch_label)
 
-                preds = preds.squeeze(1).to(device) if self.config['loss_func'] == 'bce_logits' else preds.to(device)
-                loss = self.criterion(preds,  batch.label.float().squeeze(1).to(device))
-                eval_loss.append(loss.detach().item())
-                if self.config['loss_func'] == 'bce':
-                    preds = (preds>0.5).type(torch.FloatTensor)
-                elif self.config['loss_func'] == 'ce':
-                    preds = F.softmax(preds, dim=1)
-                    preds = torch.argmax(preds, dim=1)
-                preds_list.append(preds.cpu().detach().numpy())
-                labels_list.append(batch.label.cpu().detach().numpy())
+            self.preds_list = [pred for batch_pred in self.preds_list for pred in batch_pred]
+            self.labels_list = [label for batch_labels in self.labels_list for label in batch_labels]
             
-            preds_list = [pred for batch_pred in preds_list for pred in batch_pred]
-            labels_list = [label for batch_labels in labels_list for label in batch_labels]
-            
-            eval_loss = sum(eval_loss)/len(eval_loss)
-            eval_f1, eval_macro_f1, eval_recall, eval_precision, eval_accuracy = evaluation_measures(self.config, np.array(preds_list), np.array(labels_list))
-                
-        return eval_f1, eval_macro_f1, eval_precision, eval_recall, eval_accuracy, eval_loss
-
-
-    
-    def eval_transformer(self, test = False):
-        self.model.eval()
-        preds_list, labels_list = [], []
-        eval_loss = []
-        batch_loader = self.config['val_loader'] if not test else self.config['test_loader']
-    
-        with torch.no_grad():
-            for iters, batch in enumerate(batch_loader): 
-                preds = self.model(inp=batch['input_ids'], attn_mask= batch['attention_mask'])
-                batch_label = batch['labels'].to(device)
-                if self.config['loss_func'] == 'bce':
-                    preds = F.sigmoid(preds)
-                
-                preds = preds.squeeze(1).to(device) if self.config['loss_func'] == 'bce_logits' else preds.to(device)
-                loss = self.criterion(preds,  batch_label.float().to(device))
-                eval_loss.append(loss.detach().item())
-                if self.config['loss_func'] == 'bce':
-                    preds = (preds>0.5).type(torch.FloatTensor)
-                elif self.config['loss_func'] == 'ce':
-                    preds = F.softmax(preds, dim=1)
-                    preds = torch.argmax(preds, dim=1)
-                preds_list.append(preds.cpu().detach().numpy())
-                labels_list.append(batch_label.cpu().detach().numpy())
-            
-            preds_list = [pred for batch_pred in preds_list for pred in batch_pred]
-            labels_list = [label for batch_labels in labels_list for label in batch_labels]
-            
-            eval_loss = sum(eval_loss)/len(eval_loss)
-            eval_f1, eval_macro_f1, eval_recall, eval_precision, eval_accuracy = evaluation_measures(self.config, np.array(preds_list), np.array(labels_list))
+            eval_loss = sum(self.loss_list)/len(self.loss_list)
+            eval_f1, eval_macro_f1, eval_recall, eval_precision, eval_accuracy = evaluation_measures(self.config, np.array(self.preds_list), np.array(self.labels_list))
                 
         return eval_f1, eval_macro_f1, eval_precision, eval_recall, eval_accuracy, eval_loss
             
@@ -288,6 +247,34 @@ class Doc_Encoder_Main():
     
     
 
+    def check_early_stopping(self):
+        self.this_metric = self.eval_f1 if self.config['optimze_for'] == 'f1' else self.eval_loss
+        self.current_best = self.best_val_f1 if self.config['optimze_for'] == 'f1' else self.best_val_loss
+
+        new_best = self.this_metric > self.current_best if self.config['optimze_for'] == 'f1' else self.this_metric < self.current_best
+        if new_best:
+            print("New High Score! Saving model...")
+            self.best_val_f1 = self.eval_f1
+            self.best_val_loss = self.eval_loss
+            self.best_val_acc = self.eval_accuracy
+            self.best_val_recall = self.eval_recall
+            self.best_val_precision = self.eval_precision
+            self.save_model()
+
+        self.scheduler.step()
+            
+        ### Stopping Criteria based on patience ###        
+        diff = self.this_metric - self.current_best if self.config['optimze_for'] == 'f1' else self.current_best - self.this_metric
+        if diff < 1e-3:
+            self.not_improved+=1
+            if self.not_improved >= self.config['patience']:
+                self.terminate_training= True
+        else:
+            self.not_improved = 0
+        print("current patience: ", self.not_improved)
+
+
+
 
     def train_epoch_step(self):
         self.model.train()
@@ -296,154 +283,55 @@ class Doc_Encoder_Main():
         self.preds_list = [pred for batch_pred in self.preds_list for pred in batch_pred]
         self.labels_list = [label for batch_labels in self.labels_list for label in batch_labels]
         
-        self.train_f1, self.train_f1_macro, self.train_recall, self.train_precision, self.train_accuracy = evaluation_measures(self.config, np.array(self.preds_list), np.array(self.labels_list))
-            
+        # Evaluate on train set
+        self.train_f1, self.train_f1_macro, self.train_recall, self.train_precision, self.train_accuracy = evaluation_measures(self.config, np.array(self.preds_list), np.array(self.labels_list))  
         log_tensorboard(self.config, self.config['writer'], self.model, self.epoch, self.iters, self.total_iters, self.train_loss, self.train_f1, self.train_precision, self.train_recall, self.train_accuracy, lr[0], self.threshold, loss_only=False, val=False)
         
         # Evaluate on dev set
-        if self.embed_name == 'glove':
-            self.eval_f1, self.eval_f1_macro, self.eval_precision, self.eval_recall, self.eval_accuracy, self.eval_loss = self.eval_glove()
-        elif self.embed_name in ['dbert', 'roberta']:
-            self.eval_f1, self.eval_f1_macro, self.eval_precision, self.eval_recall, self.eval_accuracy, self.eval_loss = self.eval_transformer()
-        elif self.embed_name == 'elmo' and self.model_name != 'han':
-            self.eval_f1, self.eval_f1_macro, self.eval_precision, self.eval_recall, self.eval_accuracy, self.eval_loss = self.eval_elmo(self.config['val_data'], self.config['val_labels'])
-        elif self.embed_name == 'elmo' and self.model_name == 'han':
-            self.eval_f1, self.eval_f1_macro, self.eval_precision, self.eval_recall, self.eval_accuracy, self.eval_loss = self.eval_han_elmo()
-               
+        self.eval_f1, self.eval_f1_macro, self.eval_precision, self.eval_recall, self.eval_accuracy, self.eval_loss = self.eval_model()
+
         # print stats
-        print_stats(self.config, self.epoch, self.train_loss, self.train_accuracy, self.train_f1, self.train_f1_macro, self.train_precision, self.train_recall,
+        print_stats(self.config, self.epoch, self.loss_list, self.train_accuracy, self.train_f1, self.train_f1_macro, self.train_precision, self.train_recall,
                     self.eval_loss, self.eval_accuracy, self.eval_f1, self.eval_f1_macro, self.eval_precision, self.eval_recall, self.start, lr[0])
         
         # log validation stats in tensorboard
         log_tensorboard(self.config, self.config['writer'], self.model, self.epoch, self.iters, self.total_iters, self.eval_loss, self.eval_f1, self.eval_precision, self.eval_recall, self.eval_accuracy, lr[0], self.threshold, loss_only = False, val=True)
-               
-        # # Save model checkpoints for best model
-        # if self.eval_loss < self.best_val_loss:
-        #     print("New High Score! Saving model...")
-        #     self.best_val_f1 = self.eval_f1
-        #     self.best_val_f1_macro = self.eval_f1_macro
-        #     self.best_val_acc = self.eval_accuracy
-        #     self.best_val_recall = self.eval_recall
-        #     self.best_val_precision = self.eval_precision
-        #     best_model = self.model.state_dict()
-        #     # Save the state and the vocabulary
-        #     torch.save({
-        #         'epoch': self.epoch,
-        #         'best_val_f1' : self.best_val_f1,
-        #         'model_state_dict': best_model,
-        #         # 'model_classif_state_dict': model.classifier.state_dict(),
-        #         'optimizer_state_dict': self.optimizer.state_dict(),
-        #     }, os.path.join(self.config['model_checkpoint_path'], self.config['data_name'], self.config['embed_name'], self.config['model_name'], self.config['model_save_name']))
-        
-        # use macroF1 for dataset with more than 2 classes else use F1 of target class
-        # self.eval_f1 = self.eval_f1[1] if self.config['data_name']=='pheme' else self.eval_f1 
-        # self.best_val_f1 = self.best_val_f1[1] if (not isinstance(self.best_val_f1, int) and self.config['data_name']=='pheme') else self.best_val_f1
-        
-        
-        if self.eval_f1 > self.best_val_f1:
-            print("New High Score! Saving model...")
-            self.best_val_f1 = self.eval_f1
-            self.best_val_acc = self.eval_accuracy
-            self.best_val_recall = self.eval_recall
-            self.best_val_precision = self.eval_precision
-            # Save the state and the vocabulary
-            # self.save_model() if self.config['embed_name'] not in ['dbert', 'roberta'] else self.save_transformer_model()
-            self.save_model()
-            
-            
-        if self.epoch==1:
-            print("Saving model !")
-            # self.save_model() if self.config['embed_name'] not in ['dbert', 'roberta'] else self.save_transformer_model()
-            self.save_model()
-            
-        self.scheduler.step()
-            
-        ### Stopping Criteria based on patience ###
-        
-        if self.eval_f1 - self.best_val_f1!=0 and self.eval_f1 - self.best_val_f1 < 1e-3:
-            self.not_improved+=1
-            print(self.not_improved)
-            if self.not_improved >= self.config['patience']:
-                self.terminate_training= True
-        else:
-            self.not_improved = 0
-        
-        if self.eval_f1 - self.best_val_f1 > 1e-3:
-            self.best_val_f1 = self.eval_f1
-            self.not_improved=0        
-        
-        # if self.best_val_loss - self.eval_loss < 1e-3:
-        #     self.not_improved+=1
-        #     print(self.not_improved)
-        #     if self.not_improved >= self.config['patience']:
-        #         self.terminate_training= True
-        # else:
-        #     self.not_improved = 0
-        
-        # if self.eval_loss < self.best_val_loss and self.best_val_loss - self.eval_loss > 1e-3:
-        #     self.best_val_loss = self.eval_loss
-        #     self.not_improved = 0
-            
-            
+
+        # Check for early stopping criteria
+        self.check_early_stopping()
+                
         self.preds_list = []
         self.labels_list = []
+        self.loss_list = []
     
-        
 
-    def train_iters_step(self):
-        if self.config['loss_func'] == 'bce':
-            self.preds = F.sigmoid(self.preds)
-        
-        self.preds = self.preds.squeeze(1).to(device) if self.config['loss_func'] == 'bce_logits' else self.preds.to(device)
-        if self.embed_name == 'glove':
-            self.loss = self.criterion(self.preds,  self.batch.label.float().squeeze(1).to(device)) # .long() for pheme 3-class
+
+
+    def end_training(self):
+        # Termination message
+        if self.terminate_training:
+            print("\n" + "-"*100 + "\nTraining terminated early because the Validation loss did not improve for   {}   epochs" .format(self.config['patience']))
         else:
-            self.loss = self.criterion(self.preds.to(device),  self.batch_label.float().to(device))
-
-        self.optimizer.zero_grad()
-        self.loss.backward()
-        torch.nn.utils.clip_grad_norm_(self.model.parameters(), 5)
-        self.optimizer.step()
-
-
-        if self.config['loss_func'] == 'ce':
-            self.preds = F.softmax(self.preds, dim=1)
-            self.preds = torch.argmax(self.preds, dim=1)
-        elif self.config['loss_func'] == 'bce':
-            self.preds = (self.preds>0.5).type(torch.FloatTensor)
-        elif self.config['loss_func'] == 'bce_logits': 
-            self.preds = F.sigmoid(self.preds)
-            self.preds = (self.preds>0.5).type(torch.FloatTensor).squeeze(1)
-            
-        if self.embed_name == 'glove':
-            self.preds_list.append(self.preds.cpu().detach().numpy())
-            self.labels_list.append(self.batch.label.cpu().detach().numpy())
-        else:
-            self.preds_list.append(self.preds.cpu().detach().numpy())
-            self.labels_list.append(self.batch_label.cpu().detach().numpy())
-
-        self.train_loss.append(self.loss.detach().item())
+            print("\n" + "-"*100 + "\nMaximum epochs of {} reached. Finished training !!".format(self.config['max_epoch']))
         
-        if self.iters%self.config['log_every'] == 0:
-            # Loss only
-            log_tensorboard(self.config, self.config['writer'], self.model, self.epoch, self.iters, self.total_iters, self.train_loss, self.train_f1, self.train_precision, self.train_recall, self.train_accuracy, loss_only=True, val=False)
-            
-            
-            
+        print("\n" + "-"*50 + "\n\t\tEvaluating on test set\n" + "-"*50)
+        # self.model_file = os.path.join(self.config['model_checkpoint_path'], self.config['data_name'], self.config['model_name'], self.config['model_save_name'])
+        if os.path.isfile(self.model_file):
+            self.load_model()            
+        else:
+            raise ValueError("No Saved model state_dict found for the chosen model...!!! \nAborting evaluation on test set...".format(self.config['model_name']))
+
+        self.test_f1, self.test_f1_macro, self.test_precision, self.test_recall, self.test_accuracy, _ = self.eval_model(test=True)        
+        print_test_stats(self.test_accuracy, self.test_precision, self.test_recall, self.test_f1, self.test_f1_macro, self.best_val_acc, self.best_val_precision, self.best_val_recall, self.best_val_f1)       
+        self.config['writer'].close()    
+
+    
+
             
     def train_main(self, cache=False):
         print("\n\n"+ "="*100 + "\n\t\t\t\t\t Training Network\n" + "="*100)
-
-        # Seeds for reproduceable runs
-        torch.manual_seed(self.config['seed'])
-        torch.cuda.manual_seed(self.config['seed'])
-        np.random.seed(self.config['seed'])
-        random.seed(self.config['seed'])
-        torch.backends.cudnn.deterministic = True
-        torch.backends.cudnn.benchmark = False
         
-        # Load the checkpoint to resume training if found
-        
+        # Load the checkpoint to resume training if found        
         # if os.path.isfile(self.model_file):
         #     checkpoint = torch.load(self.model_file)
         #     self.best_val_f1 = checkpoint['best_val']
@@ -459,6 +347,7 @@ class Doc_Encoder_Main():
         #     print("Using the model defined below: \n\n")
         #     print(self.model)
         # print(self.model)
+        
         self.start = time.time()
         print("\nBeginning training at:  {} \n".format(datetime.datetime.now()))
         
@@ -467,8 +356,7 @@ class Doc_Encoder_Main():
             for self.epoch in range(self.start_epoch, self.config['max_epoch']+1):        
                 for self.iters, self.batch in enumerate(self.config['train_loader']):
                     self.model.train()
-                    self.preds = self.model(self.batch.text[0].to(device), self.batch.text[1].to(device))
-                    self.train_iters_step()
+                    self.preds = self.model(inp=self.batch.text[0].to(device), sent_lens = self.batch.text[1].to(device))
                 self.train_epoch_step()
                 
                 if self.terminate_training:
@@ -486,7 +374,6 @@ class Doc_Encoder_Main():
                     self.model.train()                    
                     self.batch_ids, self.batch_label, self.sen_lens = get_elmo_batches(self.config, self.max_iters, self.iters, train_data_shuffle, train_label_shuffle)
                     self.preds = self.model(self.batch_ids.to(device), self.sen_lens)
-                    self.train_iters_step()
                 self.train_epoch_step()               
                 if self.terminate_training:
                     break
@@ -497,7 +384,6 @@ class Doc_Encoder_Main():
                     self.model.train()
                     self.preds = self.model(inp=self.batch['input_ids'], attn_mask=self.batch['attention_mask'])
                     self.batch_label = self.batch['labels'].to(device)
-                    self.train_iters_step()
                 self.train_epoch_step()
                 if self.terminate_training:
                     break
@@ -546,39 +432,15 @@ class Doc_Encoder_Main():
                         self.preds = self.model(inp = self.batch_ids, sent_lens = self.num_tokens_per_sent, doc_lens= self.num_of_sents_in_doc, arg=max_num_sent)
                     else:
                         self.preds = self.model(inp = self.batch_ids, sent_lens = self.num_tokens_per_sent, doc_lens= self.num_of_sents_in_doc, arg=max_num_sent)
-                    self.train_iters_step()
                 self.train_epoch_step()
                 if self.terminate_training:
                     break
                         
           
-        # Termination message
-        if self.terminate_training:
-            print("\n" + "-"*100 + "\nTraining terminated early because the Validation loss did not improve for   {}   epochs" .format(self.config['patience']))
-        else:
-            print("\n" + "-"*100 + "\nMaximum epochs of {} reached. Finished training !!".format(self.config['max_epoch']))
-        
-        print("\n" + "-"*50 + "\n\t\tEvaluating on test set\n" + "-"*50)
-        # self.model_file = os.path.join(self.config['model_checkpoint_path'], self.config['data_name'], self.config['model_name'], self.config['model_save_name'])
-        if os.path.isfile(self.model_file):
-            # self.load_model() if self.self.embed_name not in ['roberta', 'dbert'] else self.load_transformer_model()
-            self.load_model()            
-        else:
-            raise ValueError("No Saved model state_dict found for the chosen model...!!! \nAborting evaluation on test set...".format(self.config['model_name']))
-        if self.embed_name == 'glove':
-            test_f1, test_f1_macro, test_precision, test_recall, test_accuracy, test_loss = self.eval_glove(test=True)
-        elif self.model_name != 'han' and self.embed_name == 'elmo':
-            test_f1, test_f1_macro, test_precision, test_recall, test_accuracy, test_loss = self.eval_elmo(test_data, test_label)
-        elif self.model_name == 'han' and self.embed_name == 'elmo':
-            test_f1, test_f1_macro, test_precision, test_recall, test_accuracy, test_loss = self.eval_han_elmo(test= True)
-        elif self.embed_name in ['roberta', 'dbert']:
-            test_f1, test_f1_macro, test_precision, test_recall, test_accuracy, test_loss = self.eval_transformer(test=True)
-        print_test_stats(test_accuracy, test_precision, test_recall, test_f1, test_f1_macro, self.best_val_acc, self.best_val_precision, self.best_val_recall, self.best_val_f1)
-        
+        self.end_training()
         if cache:
             Cache_Text_Embeds(self.config, self.model)
-        self.config['writer'].close()
-        return  self.best_val_f1 , self.best_val_acc, self.best_val_recall, self.best_val_precision, test_f1, test_f1_macro, test_accuracy, test_recall, test_precision
+        return  self.best_val_f1 , self.best_val_acc, self.best_val_recall, self.best_val_precision, self.test_f1, self.test_f1_macro, self.test_accuracy, self.test_recall, self.test_precision
                     
                 
                 

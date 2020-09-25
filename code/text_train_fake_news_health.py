@@ -60,6 +60,8 @@ if __name__ == '__main__':
                         help = 'Optimizer to use for training')
     parser.add_argument('--loss_func', type = str, default = 'bce_logits',
                         help = 'Loss function to use for optimization: bce / bce_logits / ce')
+    parser.add_argument('--optimze_for', type = str, default = 'f1',
+                        help = 'Optimize for what measure during training and early stopping: loss / f1')
     parser.add_argument('--scheduler', type = str, default = 'step',
                         help = 'The type of lr scheduler to use anneal learning rate: step/multi_step')
     
@@ -183,7 +185,7 @@ if __name__ == '__main__':
     elif config['embed_name'] in ['dbert', 'xlnet', 'roberta']:
         config['train_loader'], config['val_loader'], config['test_loader'] = prep_data.prepare_transformer_training()
     elif config['embed_name']=='elmo' and config['model_name']!='han':
-        config['train_data'], config['train_label'], config['val_data'], config['val_labels'], config['test_data'], config['test_label'] = prep_data.prepare_elmo_training()
+        config['train_data'], config['train_label'], config['val_data'], config['val_labels'], config['test_data'], config['test_labels'] = prep_data.prepare_elmo_training()
         # print(len(train_labels))
     elif config['embed_name']=='elmo' and config['model_name']=='han':
         config['train_loader'], config['val_loader'], config['test_loader'] = prep_data.prepare_HAN_elmo_training(config)

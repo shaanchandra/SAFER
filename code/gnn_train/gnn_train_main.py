@@ -23,6 +23,9 @@ from sklearn.metrics import accuracy_score
 from torch_geometric.utils import to_dense_adj
 
 from utils.utils import *
+from utils.data_utils_gnn import *
+from utils.data_utils_txt import *
+from utils.data_utils_hygnn import *
 from caching_funcs.cache_gnn import *
 
 from models.base_models import NCModel, LPModel
@@ -65,7 +68,6 @@ class Graph_Net_Main():
         else:
             self.model = Graph_Net(self.config).to(device) if not self.config['model_name'].startswith('r') else Relational_GNN(self.config).to(device)
         
-
             
         if self.config['optimizer'] == 'Adam':
             self.optimizer = torch.optim.AdamW(self.model.parameters(), lr = self.config['lr'], weight_decay = self.config['weight_decay'])
@@ -96,8 +98,6 @@ class Graph_Net_Main():
         with torch.no_grad():
             if not self.config['full_graph']:
                 for iters, eval_data in enumerate(self.config['loader']): 
-                    # data_x = eval_data.x * eval_data.representation_mask.unsqueeze(1) if not test else eval_data.x # if (not test and self.config['mode']=='normal') else eval_data.x
-                    # data_x = eval_data.x * eval_data.representation_mask.unsqueeze(1) if (not test and self.config['mode']=='normal') else eval_data.x
                     if self.config['model_name'] in ['HGCN', 'HNN']:
                         eval_data.edge_index = to_dense_adj(eval_data.edge_index).squeeze(0)
                     
@@ -119,9 +119,9 @@ class Graph_Net_Main():
                         
                         preds = preds[eval_data.val_mask==1]
                         labels = eval_data.y[eval_data.val_mask==1].float()
-                    # labels = data.y * node_drop_mask.squeeze()
-                    # labels = labels[data.test_mask==1]
-                    loss = self.criterion(preds.squeeze(1).to(device), labels.to(device)) if self.config['loss_func'] == 'bce_logits' else self.criterion(preds.to(device), labels.to(device))
+
+                    preds = preds.squeeze(1).to(device) if self.config['loss_func'] == 'bce_logits' else preds.to(device)
+                    loss = self.criterion(preds, labels.to(device))  self.criterion(preds, labels.to(device))
                     eval_loss.append(loss.detach().item())
                     if self.config['loss_func'] == 'ce':
                         preds = F.softmax(preds, dim=1)
@@ -153,9 +153,8 @@ class Graph_Net_Main():
                         preds, _ = self.model.decode(preds, self.config['data'].edge_index.to(device))
                     preds = preds[self.config['data'].val_mask==1]
                     labels = self.config['data'].y[self.config['data'].val_mask==1].float()
-                # labels = self.data.y * node_drop_mask.squeeze()
-                # labels = labels[self.data.test_mask==1]
-                loss = self.criterion(preds.squeeze(1).to(device), labels.to(device)) if self.config['loss_func'] == 'bce_logits' else self.criterion(preds.to(device), labels.to(device))
+                preds = preds.squeeze(1).to(device) if self.config['loss_func'] == 'bce_logits' else preds.to(device)
+                loss = self.criterion(preds, labels.to(device))  self.criterion(preds, labels.to(device))
                 eval_loss.append(loss.detach().item())
                 if self.config['loss_func'] == 'ce':
                     preds = F.softmax(preds, dim=1)
@@ -167,8 +166,7 @@ class Graph_Net_Main():
                 
             preds_list = [pred for batch_pred in preds_list for pred in batch_pred]
             labels_list = [label for batch_labels in labels_list for label in batch_labels]
-            eval_loss = sum(eval_loss)/len(eval_loss)
-            
+            eval_loss = sum(eval_loss)/len(eval_loss)            
             # print(classification_report(np.array(labels_list), np.array(preds_list)))
             
             eval_f1, eval_macro_f1, eval_recall, eval_precision, eval_accuracy = evaluation_measures(self.config, np.array(preds_list), np.array(labels_list))
@@ -182,8 +180,44 @@ class Graph_Net_Main():
         return None
     
     
+     def save_model(self):
+        torch.save({
+                'epoch': self.epoch,
+                'best_val_f1' : self.best_val_f1,
+                'model_state_dict': self.model.state_dict(),
+                'optimizer_state_dict': self.optimizer.state_dict(),
+            }, os.path.join(self.model_file))
 
-        
+
+
+    def check_early_stopping(self):
+        self.this_metric = self.eval_f1 if self.config['optimze_for'] == 'f1' else self.eval_loss
+        self.current_best = self.best_val_f1 if self.config['optimze_for'] == 'f1' else self.best_val_loss
+
+        new_best = self.this_metric > self.current_best if self.config['optimze_for'] == 'f1' else self.this_metric < self.current_best
+        if new_best:
+            print("New High Score! Saving model...")
+            self.best_val_f1 = self.eval_f1
+            self.best_val_loss = self.eval_loss
+            self.best_val_acc = self.eval_accuracy
+            self.best_val_recall = self.eval_recall
+            self.best_val_precision = self.eval_precision
+            self.save_model()
+
+        self.scheduler.step()
+            
+        ### Stopping Criteria based on patience ###        
+        diff = self.this_metric - self.current_best if self.config['optimze_for'] == 'f1' else self.current_best - self.this_metric
+        if diff < 1e-3:
+            self.not_improved+=1
+            if self.not_improved >= self.config['patience']:
+                self.terminate_training= True
+        else:
+            self.not_improved = 0
+        print("current patience: ", self.not_improved)
+
+
+
     def train_epoch_step(self):
         self.model.train()
         lr = self.scheduler.get_lr()
@@ -193,11 +227,10 @@ class Graph_Net_Main():
         
         self.train_f1, self.train_macro_f1, self.train_recall, self.train_precision, self.train_accuracy = evaluation_measures(self.config, np.array(self.preds_list), np.array(self.labels_list))
             
-        # log_tensorboard(self.config, self.config['writer'], self.model, self.epoch, self.iters, self.total_iters, self.train_loss, self.train_f1, self.train_precision, self.train_recall, self.train_accuracy, lr[0], self.threshold, loss_only=False, val=False)
+        log_tensorboard(self.config, self.config['writer'], self.model, self.epoch, self.iters, self.total_iters, self.train_loss, self.train_f1, self.train_precision, self.train_recall, self.train_accuracy, lr[0], self.threshold, loss_only=False, val=False)
         
         # Evaluate on dev set
         self.eval_f1, self.eval_macro_f1, self.eval_precision, self.eval_recall, self.eval_accuracy, self.eval_loss = self.eval_gcn()
-        # self.eval_f1, self.eval_f1_neg, self.eval_macro_f1, self.eval_precision, self.eval_recall, self.eval_accuracy, self.eval_loss = self.eval_gcn()
                
         # print stats
         print_stats(self.config, self.epoch, self.train_loss, self.train_accuracy, self.train_f1, self.train_macro_f1, self.train_precision, self.train_recall,
@@ -205,85 +238,12 @@ class Graph_Net_Main():
         
         
         # log validation stats in tensorboard
-        # log_tensorboard(self.config, self.config['writer'], self.model, self.epoch, self.iters, self.total_iters, self.eval_loss, self.eval_f1, self.eval_precision, self.eval_recall, self.eval_accuracy, lr[0], self.threshold, loss_only = False, val=True)
+        log_tensorboard(self.config, self.config['writer'], self.model, self.epoch, self.iters, self.total_iters, self.eval_loss, self.eval_f1, self.eval_precision, self.eval_recall, self.eval_accuracy, lr[0], self.threshold, loss_only = False, val=True)
                
-        # # Save model checkpoints for best model
-        # if self.eval_loss < self.best_val_loss:
-        #     print("New High Score! Saving model...")
-        #     self.best_val_f1 = self.eval_f1
-        #     self.best_val_acc = self.eval_accuracy
-        #     self.best_val_recall = self.eval_recall
-        #     self.best_val_precision = self.eval_precision
-        #     best_model = self.model.state_dict()
-        #     # Save the state and the vocabulary
-        #     torch.save({
-        #         'epoch': self.epoch,
-        #         'best_val_f1' : self.best_val_f1,
-        #         'model_state_dict': best_model,
-        #         # 'model_classif_state_dict': model.classifier.state_dict(),
-        #         'optimizer_state_dict': self.optimizer.state_dict(),
-        #     }, os.path.join(self.model_file))
-        
-
-        if self.eval_f1 > self.best_val_f1:
-            print("New High Score! Saving model...")
-            self.best_val_f1 = self.eval_f1
-            # self.best_val_f1 = self.eval_f1
-            self.best_val_f1_macro = self.eval_macro_f1
-            self.best_val_acc = self.eval_accuracy
-            self.best_val_recall = self.eval_recall
-            self.best_val_precision = self.eval_precision
-            best_model = self.model.state_dict()
-            # Save the state and the vocabulary
-            torch.save({
-                'epoch': self.epoch,
-                'best_val_f1' : self.best_val_f1,
-                'model_state_dict': best_model,
-                # 'model_classif_state_dict': model.classifier.state_dict(),
-                'optimizer_state_dict': self.optimizer.state_dict(),
-            }, os.path.join(self.model_file))
+        # Check for early stopping criteria
+        self.check_early_stopping()            
             
-        if self.epoch==1:
-            print("Saving model !")
-            best_model = self.model.state_dict()
-            # Save the state and the vocabulary
-            torch.save({
-                'epoch': self.epoch,
-                'best_val_f1' : self.best_val_f1,
-                'model_state_dict': best_model,
-                # 'model_classif_state_dict': model.classifier.state_dict(),
-                'optimizer_state_dict': self.optimizer.state_dict(),
-            }, os.path.join(self.model_file))
-            
-        self.scheduler.step()
-    
-            
-        ### Stopping Criteria based on patience ####
-        
-        if self.eval_f1 - self.best_val_f1!=0 and self.eval_f1 - self.best_val_f1 < 1e-3:
-            self.not_improved+=1
-            print(self.not_improved)
-            if self.not_improved >= self.config['patience']:
-                self.terminate_training= True
-        else:
-            self.not_improved = 0
-        
-        if self.eval_f1 > self.best_val_f1 and self.eval_f1 - self.best_val_f1 > 1e-3:
-            self.best_val_f1 = self.best_val_f1
-            self.not_improved=0        
-        
-        # if self.best_val_loss - self.eval_loss < 1e-3:
-        #     self.not_improved+=1
-        #     print(self.not_improved)
-        #     if self.not_improved >= self.config['patience']:
-        #         self.terminate_training= True
-        # else:
-        #     self.not_improved = 0
-        
-        # if self.eval_loss < self.best_val_loss and self.best_val_loss - self.eval_loss > 1e-3:
-        #     self.best_val_loss = self.eval_loss
-        #     self.not_improved = 0
-            
+        self.scheduler.step()            
             
         self.preds_list = []
         self.labels_list = []
@@ -320,22 +280,14 @@ class Graph_Net_Main():
 
         self.train_loss.append(self.loss.detach().item())
         
-        # if self.iters%self.config['log_every'] == 0:
-        #     # Loss only
-        #     log_tensorboard(self.config, self.config['writer'], self.model, self.epoch, self.iters, self.total_iters, self.train_loss, self.train_f1, self.train_precision, self.train_recall, self.train_accuracy, loss_only=True, val=False)
+        if self.iters%self.config['log_every'] == 0:
+            # Loss only
+            log_tensorboard(self.config, self.config['writer'], self.model, self.epoch, self.iters, self.total_iters, self.train_loss, self.train_f1, self.train_precision, self.train_recall, self.train_accuracy, loss_only=True, val=False)
     
     
     
     def train_main(self, cache):
         print("\n\n"+ "="*100 + "\n\t\t\t\t\t Training Network\n" + "="*100)
-
-        # Seeds for reproduceable runs
-        torch.manual_seed(self.config['seed'])
-        torch.cuda.manual_seed(self.config['seed'])
-        np.random.seed(self.config['seed'])
-        random.seed(self.config['seed'])
-        torch.backends.cudnn.deterministic = True
-        torch.backends.cudnn.benchmark = False
         
         self.start = time.time()
         print("\nBeginning training at:  {} \n".format(datetime.datetime.now()))
@@ -385,44 +337,21 @@ class Graph_Net_Main():
             print("\n" + "-"*100 + "\nTraining terminated early because the Validation loss did not improve for   {}   epochs" .format(self.config['patience']))
         else:
             print("\n" + "-"*100 + "\nMaximum epochs reached. Finished training !!")
-        
-        if self.config['mode'] == 'normal':
-            if self.epoch > self.config['patience']:
-                print("\n" + "-"*50 + "\n\t\tEvaluating on test set\n" + "-"*50)
-                if os.path.isfile(self.model_file):
-                    checkpoint = torch.load(self.model_file)
-                    self.model.load_state_dict(checkpoint['model_state_dict'])
-                    self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-                else:
-                    raise ValueError("No Saved model state_dict found for the chosen model...!!! \nAborting evaluation on test set...".format(self.config['model_name']))
+
+        if cache:
+            Cache_GNN_Embeds(self.config, self.model)
                 
-                test_f1, test_macro_f1, test_precision, test_recall, test_accuracy, test_loss = self.eval_gcn(test=True)
-                if self.config['data_name'] != 'pheme':
-                    print_test_stats(test_accuracy, test_precision, test_recall, test_f1, test_macro_f1, self.best_val_acc, self.best_val_precision, self.best_val_recall, self.best_val_f1)
-                else:
-                    print_test_stats_pheme(test_accuracy, test_precision, test_recall, test_f1, self.best_val_acc, self.best_val_precision, self.best_val_recall, self.best_val_f1)
-            else:
-                test_f1, test_macro_f1, test_precision, test_recall, test_accuracy = 0,0,0,0,0
-                
-            #self.predict_and_cache()
-            self.config['writer'].close()
-            return  self.best_val_f1 , self.best_val_acc, self.best_val_recall, self.best_val_precision, test_f1, test_macro_f1, test_accuracy, test_recall, test_precision
-        
-        else:
-            if cache:
-                Cache_GNN_Embeds(self.config, self.model)
-                
-            # print("\nModel explainer working...")
-            # checkpoint = torch.load(self.model_file, map_location=torch.device('cpu'))
-            # self.model.load_state_dict(checkpoint['model_state_dict'])
-            # explainer = GNNExplainer(self.model, epochs=200)
-            # node_idx = 20
-            # node_feat_mask, edge_mask = explainer.explain_node(node_idx, self.config['data'].x, self.config['data'].edge_index)
-            # ax, G = explainer.visualize_subgraph(node_idx, self.config['data'].edge_index, edge_mask, y= self.config['data'].node_type, threshold = None)
-            # # plt.savefig(fname = './data/{}_explained_node{}.pdf'.format(self.config['model_name'], str(node_idx)), dpi=25)
-            # plt.tight_layout()
-            # plt.show()
-            return  self.best_val_f1 , self.best_val_acc, self.best_val_recall, self.best_val_precision
+        # print("\nModel explainer working...")
+        # checkpoint = torch.load(self.model_file, map_location=torch.device('cpu'))
+        # self.model.load_state_dict(checkpoint['model_state_dict'])
+        # explainer = GNNExplainer(self.model, epochs=200)
+        # node_idx = 20
+        # node_feat_mask, edge_mask = explainer.explain_node(node_idx, self.config['data'].x, self.config['data'].edge_index)
+        # ax, G = explainer.visualize_subgraph(node_idx, self.config['data'].edge_index, edge_mask, y= self.config['data'].node_type, threshold = None)
+        # # plt.savefig(fname = './data/{}_explained_node{}.pdf'.format(self.config['model_name'], str(node_idx)), dpi=25)
+        # plt.tight_layout()
+        # plt.show()
+        return  self.best_val_f1 , self.best_val_acc, self.best_val_recall, self.best_val_precision
         
         
         
