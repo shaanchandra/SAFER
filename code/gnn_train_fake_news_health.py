@@ -56,6 +56,8 @@ if __name__ == '__main__':
                         help = 'Optimizer to use for training')
     parser.add_argument('--loss_func', type = str, default = 'bce_logits',
                         help = 'Loss function to use for optimization: bce / bce_logits / ce')
+    parser.add_argument('--optimze_for', type = str, default = 'f1',
+                        help = 'Optimize for what measure during training and early stopping: loss / f1')
     parser.add_argument('--scheduler', type = str, default = 'step',
                         help = 'The type of lr scheduler to use anneal learning rate: step/multi_step')
     
